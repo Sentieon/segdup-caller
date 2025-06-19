@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+#backend-path = "." # Specifies that the backend is in the current directory (can be omitted if setuptools is in requires)
+
+[project]
+name = "segdup-caller"
+version = "0.1.0" # Start with an initial version
+authors = [
+    { name = "Zhipan Li", email = "zhipan.li@sentieon.com" },
+]
+description = "A Python package for calling variants for genes with highly similar paralogs" 
+readme = "README.md" 
+requires-python = ">=3.9" 
+keywords = ["bioinformatics", "genomics", "vcf", "variant calling"] 
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: BSD 2-Clause License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Bio-Informatics"
+]
+dependencies = [
+    "pysam>=0.19", 
+    "pyyaml>=6.0",  
+    "colorlog>=6.4.0",
+    "packaging>=22.0",
+    "scipy>=1.0",
+    "pandas>=1.0",
+    "vcflib>=1.0",
+    "whatshap>=2.3"
+]
+
+# This tells pip what your package directory is
+[tool.setuptools.packages.find]
+where = ["."] # Look for packages in the current directory
+include = ["genecaller*"] # Include the genecaller package
+exclude = ["tests*"] 
+
+# This defines the command-line script
+[project.scripts]
+segdup-caller = "genecaller.__main__:main"
+
+[project.license]
+file = "LICENSE"
+
+[tool.setuptools.package-data]
+genecaller = ["data/*"]
+
+[project.urls]
+Homepage = "https://github.com/Sentieon/segdup-caller"
+"Bug Tracker" = "https://github.com/Sentieon/segdup-caller/issues"
+"Source Code" = "https://github.com/Sentieon/segdup-caller"

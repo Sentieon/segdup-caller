@@ -1,0 +1,103 @@
+CFH:
+  diff_vcf:
+  - data/CFH.vcf.gz
+  - data/CFHR1.vcf.gz
+  gene_names:
+  - CFH
+  - CFHR1
+  gene_regions:
+  - chr1:196742575-196747504
+  - chr1:196827190-196832189
+  map: data/CFH_CFHR1.dat
+CFHR3:
+  diff_vcf:
+  - data/CFHR1-3.vcf.gz
+  - data/CFHR2-4.vcf.gz
+  gene_names:
+  - CFHR1-3
+  - CFHR2-4
+  gene_regions:
+  - chr1:196786960-196824780
+  - chr1:196911484-196948803
+  map: data/CFHR1-3_CFHR2-4.dat
+CYP11B1:
+  diff_vcf:
+  - data/CYP11B1.vcf.gz
+  - data/CYP11B2.vcf.gz
+  gene_names:
+  - CYP11B1
+  - CYP11B2
+  gene_regions:
+  - chr8:142873164-142879950
+  - chr8:142910764-142917977
+  map: data/CYP11B1_CYP11B2.dat
+CYP2D6:
+  diff_vcf:
+  - data/CYP2D6.vcf.gz
+  - data/CYP2D7.vcf.gz
+  gene_names:
+  - CYP2D6
+  - CYP2D7
+  gene_regions:
+  - chr22:42123192-42132193
+  - chr22:42135344-42145873
+  map: data/CYP2D6_CYP2D7.dat
+GBA:
+  diff_vcf:
+  - data/GBA1.vcf.gz
+  - data/GBAP1.vcf.gz
+  gene_names:
+  - GBA1
+  - GBAP1
+  gene_regions:
+  - chr1:155230976-155241868
+  - chr1:155210382-155219657
+  map: data/GBA1_GBAP1.dat
+NCF1:
+  diff_vcf:
+  - data/NCF1.vcf.gz
+  - data/NCF1B.vcf.gz
+  gene_names:
+  - NCF1
+  - NCF1B
+  gene_regions:
+  - chr7:74769021-74792317
+  - chr7:73215625-73238945
+  map: data/NCF1_NCF1B.dat
+PMS2:
+  diff_vcf:
+  - data/PMS2.vcf.gz
+  - data/PMS2CL.vcf.gz
+  gene_names:
+  - PMS2
+  - PMS2CL
+  gene_regions:
+  - chr7:5965000-5993410
+  - chr7:6733563-6759796
+  map: data/PMS2_PMS2CL.dat
+SMN1:
+  diff_vcf:
+  - data/SMN1.vcf.gz
+  - data/SMN2.vcf.gz
+  gene_names:
+  - SMN1
+  - SMN2
+  gene_regions:
+  - chr5:70915943-70963993
+  - chr5:70040526-70088546
+  longdel: chr5:70948286-70954592,chr5:70917700-70921260
+  map: data/SMN1_SMN2.dat
+STRC:
+  diff_vcf:
+  - data/STRC.vcf.gz
+  - data/STRCP1.vcf.gz
+  gene_names:
+  - STRC
+  - STRCP1
+  gene_regions:
+  - chr15:43599003-43620000
+  - chr15:43698817-43719466
+  map: data/STRC_STRCP1.dat
+main:
+  cnv_model: data/SentieonGeneCaller0.1.bundle/cnv.model
+  min_map_qual: 50
