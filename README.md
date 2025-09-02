@@ -20,6 +20,7 @@ Segdup caller currently supports the following genes and segmental duplication r
 | NCF1        | NCF1, NCF1B                          |
 | CFH         | CFH, CFHR1, CFHR2, CFHR3, CFHR4      |
 | CYP11B1     | CYP11B1, CYP11B2                     |
+| HBA         | HBA1, HBA2                           |
 
 > **Note:** Segdup caller is expanding the list of supported genes. If there are particular genes you hope to support, or you encounter any issues, please [file an issue](https://github.com/Sentieon/segdup-caller/issues).
 
@@ -54,9 +55,10 @@ You can find a list of Sentieon models in our [Sentieon models repository](https
 
 ```bash
 usage: segdup-caller [-h] --short SHORT [--long LONG] --sr_model SR_MODEL
-                  [--lr_model LR_MODEL] --reference REFERENCE --genes GENES
-                  [--sample_name SAMPLE_NAME] [--sr_prefix SR_PREFIX]
-                  [--lr_prefix LR_PREFIX] --outdir OUTDIR
+                     [--lr_model LR_MODEL] --reference REFERENCE --genes GENES
+                     [--sample_name SAMPLE_NAME] [--sr_prefix SR_PREFIX]
+                     [--lr_prefix LR_PREFIX] [--config CONFIG] --outdir OUTDIR
+                     [--version] [--keep_temp]
 ```
 
 Targeted variant caller for genes with highly similar paralogs.
@@ -66,37 +68,47 @@ Targeted variant caller for genes with highly similar paralogs.
 ```
   -h, --help                Show this help message and exit
 
-  --short SHORT, -s SHORT  Input short-read BAM or CRAM (required)
+  --short SHORT, -s SHORT   Input short-read BAM or CRAM (required)
 
-  --long LONG, -l LONG     Input long-read BAM or CRAM (optional)
+  --long LONG, -l LONG      Input long-read BAM or CRAM (optional)
 
-  --sr_model SR_MODEL      Short-read model bundle (required)
+  --sr_model SR_MODEL       Short read model bundle (required)
 
-  --lr_model LR_MODEL      Long-read model bundle (required if --long is provided)
+  --lr_model LR_MODEL       Long read model bundle (required if --long is provided)
 
   --reference REFERENCE, -r REFERENCE
-                           Reference FASTA file
+                            Reference file
 
-  --genes GENES, -g GENES  Comma-separated list of regions to be called.
-                           Supported: CFH, CFHR3, CYP11B1, CYP2D6, GBA,
-                           NCF1, PMS2, SMN1, STRC
+  --genes GENES, -g GENES   List of genes to be called (comma separated).
+                            Supported genes: CFH, CFHR3, CYP11B1, CYP2D6, GBA,
+                            NCF1, PMS2, SMN1, STRC, HBA
 
-  --sample_name SAMPLE_NAME
-                           Sample name (default: use SM tag from the short-read BAM file)
+  --sample_name SAMPLE_NAME Sample name (default: SM tag in the input short-read
+                            BAM file will be used)
 
-  --sr_prefix SR_PREFIX    Output prefix for short-read results
+  --sr_prefix SR_PREFIX     Short read result prefix
 
-  --lr_prefix LR_PREFIX    Output prefix for long-read results
+  --lr_prefix LR_PREFIX     Long read result prefix
+
+  --config CONFIG           Custom gene configuration file (advanced users only)
 
   --outdir OUTDIR, -o OUTDIR
-                           Output directory
+                            Output directory
+
+  --version                 Show program's version number and exit
+
+  --keep_temp               Keep temporary files for debugging
 ```
 
-### Example
+### Examples
 
-Calling SMN1/SMN2 with a short-read input bam: 
-
+**Check version:**
+```bash
+segdup-caller --version
 ```
+
+**Calling SMN1/SMN2 with a short-read input BAM:**
+```bash
 segdup-caller -s $short_read_bam -r $hg38_REF --sr_model $short_read_model_bundle -g SMN1 -o $outdir 
 ```
 

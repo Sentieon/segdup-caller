@@ -42,6 +42,10 @@ CYP2D6:
   - chr22:42123192-42132193
   - chr22:42135344-42145873
   map: data/CYP2D6_CYP2D7.dat
+  config:
+    prior_type: gamma        # Allows asymmetric distribution
+    gamma_shape: 3.0         # Shape parameter (α)
+    gamma_scale: 0.67        # Scale parameter (β), mean = α×β = 2.0
 GBA:
   diff_vcf:
   - data/GBA1.vcf.gz
@@ -75,6 +79,9 @@ PMS2:
   - chr7:5965000-5993410
   - chr7:6733563-6759796
   map: data/PMS2_PMS2CL.dat
+  config:
+    prior_type: gaussian  # Conservative symmetric prior
+    cn_prior_std: 0.5     # Tight around CN=2 for highly conserved gene
 SMN1:
   diff_vcf:
   - data/SMN1.vcf.gz
@@ -85,8 +92,18 @@ SMN1:
   gene_regions:
   - chr5:70915943-70963993
   - chr5:70040526-70088546
-  longdel: chr5:70948286-70954592,chr5:70917700-70921260
+  longdel: 
+  - [SMN1_6.3kdel, chr5:70948286-70954592]
+  - [SMN1_3.5kdel, chr5:70917700-70921260]
+  - [SMN2_6.3kdel, chr5:70072861-70079172]
+  - [SMN2_3.5kdel, chr5:70042283-70045842]
   map: data/SMN1_SMN2.dat
+  config:
+    longdel_priors:
+      SMN1_6.3kdel: 0.15    # Common deletion in SMA patients
+      SMN1_3.5kdel: 0.05    # Less common deletion
+      SMN2_6.3kdel: 0.10    # SMN2 deletions also occur
+      SMN2_3.5kdel: 0.03    # Least common deletion
 STRC:
   diff_vcf:
   - data/STRC.vcf.gz
@@ -98,6 +115,25 @@ STRC:
   - chr15:43599003-43620000
   - chr15:43698817-43719466
   map: data/STRC_STRCP1.dat
+HBA:
+  tandem: true
+  diff_vcf: 
+  - data/HBA.vcf.gz
+  gene_names:
+  - HBA
+  gene_regions:
+  - chr16:169454-177522
+  liftover_regions: 
+   - [HBA2, "chr16:169455-170791,chr16:175796-177521"]
+   - [HBA1, "chr16:171990-173710,chr16:173712-175046"]
+  cn_regions:
+   - [a3.7, chr16:172871-176674]
+   - [a4.2, chr16:169818-174075]
+  ignore_nondup: false
+  config:
+   dp_norm: 1.12
+  map: data/HBA.dat
 main:
   cnv_model: data/SentieonGeneCaller0.1.bundle/cnv.model
-  min_map_qual: 50
+  min_map_qual: 40
+  cn_prior_std: 2

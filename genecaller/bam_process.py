@@ -7,21 +7,22 @@ from .util import IntervalList, get_data_file
 from .logging import get_logger
 import heapq
 from collections import namedtuple, Counter
-import statistics
 from scipy.stats import binom, gamma
 import tempfile
 import numpy as np
 import pandas as pd
-import shutil
 import re
 import copy
+import bisect
+import multiprocessing
+from typing import List, Dict, Tuple, Optional, Any, Union, Callable
 
 Segment = namedtuple("Segment", "chrom, start, end, cnt, mq, mean, std, mean0, std0")
 DepthSegment = namedtuple("DepthSegment", "chrom, start, end, mq, mean, mean0")
 
 
 class Bam:
-    def __init__(self, bam, ref, param):
+    def __init__(self, bam: str, ref: str, param: Dict[str, Any]) -> None:
         self.bam = bam
         self.bamh = None
         self.header = None
@@ -29,6 +30,7 @@ class Bam:
         self.ref = ref
         self.depths = {}
         self.segments = {}
+        self._depth_coords_cache = {}  # Cache for sorted coordinate lists
         self.cnv_model = ""
         self.lr_model = ""
         self.sr_model = ""
@@ -38,6 +40,7 @@ class Bam:
         self.clipped_bam = None
         self.outdir = None
         self.tmpdir = param["tmpdir"]
+        self.dp_norm = 1.0
         if "tools" not in param:
             raise Exception("External tools are not set up")
         for k, v in param["tools"].items():
@@ -45,50 +48,73 @@ class Bam:
         for k, v in param.items():
             if hasattr(self, k):
                 setattr(self, k, v)
-        if self.cnv_model and not os.path.exists(self.cnv_model) and not os.path.exists(os.path.dirname(self.cnv_model)):
+        if (
+            self.cnv_model
+            and not os.path.exists(self.cnv_model)
+            and not os.path.exists(os.path.dirname(self.cnv_model))
+        ):
             self.cnv_model = get_data_file(self.cnv_model)
-        if self.lr_model and not os.path.exists(self.lr_model) and not os.path.exists(os.path.dirname(self.lr_model)):
+        if (
+            self.lr_model
+            and not os.path.exists(self.lr_model)
+            and not os.path.exists(os.path.dirname(self.lr_model))
+        ):
             self.lr_model = get_data_file(self.lr_model)
-        if self.sr_model and not os.path.exists(self.sr_model) and not os.path.exists(os.path.dirname(self.sr_model)):
+        if (
+            self.sr_model
+            and not os.path.exists(self.sr_model)
+            and not os.path.exists(os.path.dirname(self.sr_model))
+        ):
             self.sr_model = get_data_file(self.sr_model)
-        self.logger = get_logger(self.__class__.__name__, "INFO")
+        self.threads = multiprocessing.cpu_count()
+        self.logger = get_logger(self.__class__.__name__)
 
-    def reset(self):
+    def reset(self) -> None:
         self.depths = {}
         self.segments = {}
+        self._depth_coords_cache.clear()  # Clear cache when resetting
         self.clipped_bam = None
+        self.dp_norm = 1.0
 
     @staticmethod
-    def rc(seq):
+    def rc(seq: str) -> str:
         rev = {"A": "T", "C": "G", "T": "A", "G": "C", "N": "N"}
         return "".join([rev[s] for s in seq[-1::-1]])
 
-    def call_dnascope(self, output, param):
+    def call_variant(self, output: str, param: Dict[str, Any]) -> None:
+        if self.use_existing and os.path.exists(output) and os.path.getsize(output):
+            return
+        if "ploidy" in param and param["ploidy"] != 2:
+            param["algo"] = "Haplotyper"
+        self.call_dnascope(output, param)
+
+    def call_dnascope(self, output: str, param: Dict[str, Any]) -> None:
         if self.use_existing and os.path.exists(output) and os.path.getsize(output):
             return
         bam = self.clipped_bam if self.clipped_bam else self.bam
         driver_opt = param.get("driver_opt", "") + f" -i {bam} -r {self.ref}"
         algo_opt = param.get("algo_opt", "")
         apply_model = ""
-        if "model" in param:
+        algo = "DNAscope" if "algo" not in param else param["algo"]
+        ploidy = param.get("ploidy", 2)
+        algo_opt += f" --ploidy {ploidy}"
+        given = param.get("given", "")
+        if given and os.path.exists(given):
+            algo_opt += f" --given {given} -d {given}"
+        if "model" in param and algo == "DNAscope" and ploidy == 2 and not given:
             algo_opt += f" --model {param['model']}"
             apply_model = param["model"]
         if "region" in param:
             driver_opt += f" --interval {param['region']}"
-        if "ploidy" in param:
-            algo_opt += f" --ploidy {param['ploidy']}"
-            if param["ploidy"] != 2:
-                apply_model = ""
-        if "given" in param:
-            algo_opt += f" --given {param['given']} -d {param['given']}"
-            apply_model = ""
         elif "dbsnp" in param:
             algo_opt += f" -d {param['dbsnp']}"
         if apply_model:
             tmp_output = output.replace("vcf", "tmp.vcf")
         else:
             tmp_output = output
-        cmd = f"{self.sentieon} driver {driver_opt} --algo DNAscope {algo_opt} {tmp_output}"
+        cmd = (
+            f"{self.sentieon} driver {driver_opt} --algo {algo} {algo_opt} {tmp_output}"
+        )
         result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
         if result.returncode:
             raise Exception(result.stderr)
@@ -98,7 +124,7 @@ class Bam:
             if result.returncode:
                 raise Exception(result.stderr)
 
-    def call_genotyper(self, output, param):
+    def call_genotyper(self, output: str, param: Dict[str, Any]) -> None:
         if self.use_existing and os.path.exists(output) and os.path.getsize(output):
             return
         bam = self.clipped_bam if self.clipped_bam else self.bam
@@ -119,7 +145,7 @@ class Bam:
         if result.returncode:
             raise Exception(result.stderr)
 
-    def call_cnvscope(self, output, param):
+    def call_cnvscope(self, output: str, param: Dict[str, Any]) -> None:
         if self.use_existing and os.path.exists(output) and os.path.getsize(output):
             return
         driver_opt = param.get("driver_opt", "") + f" -i {self.bam} -r {self.ref}"
@@ -136,21 +162,21 @@ class Bam:
         result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
         result.check_returncode()
 
-    def phase_vcf(self, in_vcf, out_vcf, ploidy=2):
+    def phase_vcf(self, in_vcf: str, out_vcf: str, ploidy: int = 2) -> None:
         if self.use_existing and os.path.exists(out_vcf) and os.path.getsize(out_vcf):
             return
         bam = self.clipped_bam if self.clipped_bam else self.bam
         if ploidy == 2:
             cmd = f"{self.whatshap} phase -o {out_vcf} {in_vcf} {bam} --reference {self.ref}"
         else:
-            cmd = f"{self.whatshap} polyphase -o {out_vcf} {in_vcf} {bam} -p {ploidy} --reference {self.ref} -B 5"
+            cmd = f"{self.whatshap} polyphase -o {out_vcf} {in_vcf} {bam} -p {ploidy} --reference {self.ref} -B 5 -t {self.threads}"
         result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
         result.check_returncode()
         cmd = f"{self.sentieon} util vcfindex {out_vcf}"
         result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
         result.check_returncode()
 
-    def get_depth(self, regions):
+    def get_depth(self, regions: Union[str, IntervalList]) -> List[Any]:
         if not regions:
             return []
         if isinstance(regions, str):
@@ -163,15 +189,41 @@ class Bam:
             param["region"] = regions.to_region_str(chrs)
             output = os.path.join(f"{self.prefix}.cnv.vcf.gz")
             self.call_depth(output, param)
-        depths = [
-            d
-            for chr in regions.regions
-            for d in self.depths[chr]
-            if (d.chrom, d.start) in regions or (d.chrom, d.end) in regions
-        ]
+        depths = []
+        for chr in regions.regions:
+            if chr not in self.depths:
+                continue
+
+            chr_regions = regions.regions[chr]
+            chr_depths = self.depths[chr]
+
+            # Use cached coordinate lists
+            if chr not in self._depth_coords_cache:
+                # Fallback: compute if not cached
+                starts = [d.start for d in chr_depths]
+                ends = [d.end for d in chr_depths]
+                self._depth_coords_cache[chr] = (starts, ends)
+            else:
+                starts, ends = self._depth_coords_cache[chr]
+
+            i = 0
+            while i < len(chr_regions):
+                start, end = chr_regions[i], chr_regions[i + 1]
+
+                # Binary search using pre-computed lists
+                left_idx = bisect.bisect_left(ends, start)
+                right_idx = bisect.bisect_right(starts, end)
+
+                # Check only segments in this range
+                for j in range(left_idx, min(right_idx, len(chr_depths))):
+                    d = chr_depths[j]
+                    if d.start < end and d.end > start:  # Overlap check
+                        depths.append(d)
+
+                i += 2
         return depths
 
-    def get_segments(self, regions):
+    def get_segments(self, regions: Union[str, IntervalList]) -> Any:
         if not regions:
             return []
         if isinstance(regions, str):
@@ -188,14 +240,19 @@ class Bam:
             self.call_depth(output, param)
         segments = set()
         for chr, reg in regions.regions.items():
-            for i in range(len(reg) // 2):
-                s, e = regions.regions[chr][i * 2], regions.regions[chr][i * 2 + 1]
-                segments = segments.union(
-                    [seg for seg in self.segments[chr] if seg.start < e and seg.end > s]
+            if chr not in self.segments:
+                continue
+            chr_segments = self.segments[chr]
+            i = 0
+            while i < len(reg):
+                s, e = reg[i], reg[i + 1]
+                segments.update(
+                    seg for seg in chr_segments if seg.start < e and seg.end > s
                 )
+                i += 2
         return segments
 
-    def call_depth(self, output, param):
+    def call_depth(self, output: str, param: Dict[str, Any]) -> None:
         orig_region = None
         if "region" in param:
             orig_region = param["region"]
@@ -227,40 +284,59 @@ class Bam:
                     v.end,
                     v.info["CNT"],
                     v.samples[0]["MQS"],
-                    dp[0],
-                    dp[1],
-                    dp0[0],
-                    dp0[0],
+                    dp[0] / self.dp_norm,
+                    dp[1] / self.dp_norm,
+                    dp0[0] / self.dp_norm,
+                    dp0[0] / self.dp_norm,
                 )
             )
         depth_df = pd.read_csv(tmp_output_norm, sep="\t")[depth_fields]
-        self.depths = dict(
-            [
-                (
-                    chr,
-                    [
-                        DepthSegment(*row)
-                        for row in depth_df[depth_df["contig"] == chr].itertuples(
-                            index=False
-                        )
-                    ],
-                )
-                for chr in chrs
-            ]
-        )
+        depth_df["DP"] /= self.dp_norm
+        depth_df["DP0"] /= self.dp_norm
+        high_mq_depth_df = depth_df[depth_df["MQ"] > 50]
+        self.overall_depth_std = high_mq_depth_df["DP"].std()
+        # Optimize DepthSegment creation using vectorized operations
+        self.depths = {}
+        self._depth_coords_cache = {}
+        for chr, group in depth_df.groupby("contig"):
+            # Use vectorized numpy operations instead of itertuples
+            values = group.values
+            chr_depths = [DepthSegment(*row) for row in values]
+            self.depths[chr] = chr_depths
+            # Cache coordinates directly from numpy arrays for better performance
+            self._depth_coords_cache[chr] = (
+                values[:, 1].tolist(),  # start column
+                values[:, 2].tolist(),  # end column
+            )
         if orig_region:
             orig_region_itv = IntervalList(region=orig_region)
-            trim_depth_df = depth_df[
-                depth_df.apply(
-                    lambda r: (r["contig"], r["start"]) in orig_region_itv
-                    or (r["contig"], r["end"]) in orig_region_itv,
-                    axis=1,
-                )
-            ]
+
+            # Vectorized filtering using the same logic as the earlier optimization
+            mask = pd.Series(False, index=depth_df.index)
+
+            for chr in orig_region_itv.regions:
+                chr_mask = depth_df["contig"] == chr
+                if not chr_mask.any():
+                    continue
+
+                chr_regions = orig_region_itv.regions[chr]
+                chr_rows = depth_df[chr_mask]
+
+                i = 0
+                while i < len(chr_regions):
+                    start, end = chr_regions[i], chr_regions[i + 1]
+
+                    # Vectorized overlap check
+                    overlap_mask = (chr_rows["start"] < end) & (chr_rows["end"] > start)
+                    mask[chr_rows[overlap_mask].index] = True
+
+                    i += 2
+
+            trim_depth_df = depth_df[mask]
             trim_depth_df.to_csv(output_norm, sep="\t", index=None)
             self.trim_to_region_vcf(orig_region, tmp_output, output)
 
-    def trim_to_region_vcf(self, region, in_vcf, out_vcf):
+    def trim_to_region_vcf(self, region: str, in_vcf: str, out_vcf: str) -> None:
         if region.endswith(".bed"):
             region_opt = f"-T {region}"
         else:
@@ -269,20 +345,32 @@ class Bam:
         result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
         result.check_returncode()
 
-    def init_bamh(self):
+    def init_bamh(self) -> pysam.AlignmentFile:
         if self.bamh:
             self.bamh.close()
             self.bamh = None
         if self.bam.endswith(".cram"):
             if not self.ref:
-                print("No reference file provided for cram input", file=sys.stderr)
+                self.logger.error("No reference file provided for CRAM input")
                 sys.exit(1)
             self.bamh = pysam.AlignmentFile(self.bam, "rc", reference_filename=self.ref)
         else:
             self.bamh = pysam.AlignmentFile(self.bam, "rb")
         return self.bamh
 
-    def init_outbamh(self, out_bam):
+    def _pileup_safe(
+        self, bamh: pysam.AlignmentFile, region: str, truncate: bool = True
+    ) -> Any:
+        """Safe pileup that handles CRAM files without multiple_iterators warning"""
+        if self.bam.endswith(".cram"):
+            # CRAM doesn't support multiple_iterators, so don't use it
+            return bamh.pileup(
+                region=region, truncate=truncate, multiple_iterators=False
+            )
+        else:
+            return bamh.pileup(region=region, truncate=truncate)
+
+    def init_outbamh(self, out_bam: str) -> pysam.AlignmentFile:
         self.init_bamh()
         if out_bam.endswith(".cram"):
             out_bamh = pysam.AlignmentFile(
@@ -292,13 +380,15 @@ class Bam:
             out_bamh = pysam.AlignmentFile(out_bam, "wb", template=self.bamh)
         return out_bamh
 
-    def get_header_field(self, field):
+    def get_header_field(self, field: str) -> Any:
         if not self.header:
             self.init_bamh()
             self.header = self.bamh.header
         return self.header.get(field)
 
-    def clip_to_region(self, out_bam, regions, min_length=300):
+    def clip_to_region(
+        self, out_bam: str, regions: str, min_length: Optional[int] = 300
+    ) -> None:
         if self.use_existing and os.path.exists(out_bam) and os.path.getsize(out_bam):
             return
         if self.bamh is None:
@@ -358,22 +448,25 @@ class Bam:
         out_bamh.close()
         pysam.index(out_bam)
 
-    def make_fasta(self, ref_file, region):
-        make_ref_cmd = f"{self.samtools} faidx {self.ref} {region} > {ref_file}"
+    def make_fasta(self, ref_file: str, region: str) -> list[str]:
+        make_ref_cmd = (
+            f"{self.samtools} faidx {self.ref} {region.replace(',', ' ')} > {ref_file}"
+        )
         result = subprocess.run(
             make_ref_cmd, capture_output=True, text=True, shell=True
         )
         result.check_returncode()
         pysam.faidx(ref_file)
+        contig_names = []
         with open(ref_file) as f:
             for line in f:
-                contig_name = line[1:].strip()
-                break
-        return contig_name
+                if line.startswith(">"):
+                    contig_names.append(line[1:].strip())
+        return contig_names
 
     # convert 0-based to 1-based regions
     @staticmethod
-    def to_region(positions, min_gap=1):
+    def to_region(positions: Dict[str, Dict[int, int]], min_gap: int = 1) -> List[str]:
         regions = []
         for chr, pos in positions.items():
             last_pos = -1
@@ -382,21 +475,21 @@ class Bam:
             for p in sorted_pos:
                 if p > last_pos + min_gap:
                     if last_region:
-                        last_region += str(last_pos + 2)
+                        last_region += str(last_pos + 1)
                         regions.append(last_region)
                     last_region = f"{chr}:{p + 1}-"
                 last_pos = p
             if last_pos and last_region:
-                last_region += str(last_pos + 2)
+                last_region += str(last_pos + 1)
                 regions.append(last_region)
         return regions
 
-    def liftover_combine(self, gene, out_bam):
+    def liftover_combine(self, gene: Any, out_bam: str) -> List[Dict[str, Any]]:
         out_prefix = out_bam[:-5] if out_bam.endswith(".cram") else out_bam[:-4]
         liftover_bams = []
         results = []
-        for i, gene_region in enumerate(gene.gene_regions):
-            liftover_bams.append(f"{out_prefix}.{gene.gene_names[i]}.bam")
+        for i in range(len(gene.liftover_regions)):
+            liftover_bams.append(f"{out_prefix}.{gene.liftover_region_names[i]}.bam")
             mapping_dict = gene.mapping.g2tog1 if i == 0 else gene.mapping.g1tog2
             results.append(
                 self.liftover(
@@ -415,8 +508,14 @@ class Bam:
         return results
 
     def liftover(
-        self, extract, target, out_bam, mapping, crop_first=False, min_ratio=0.3
-    ):
+        self,
+        extract: str,
+        target: str,
+        out_bam: str,
+        mapping: Dict[int, int],
+        crop_first: bool = False,
+        min_ratio: float = 0.3,
+    ) -> Dict[str, str]:
         out_prefix = out_bam[:-5] if out_bam.endswith(".cram") else out_bam[:-4]
         ext = ".cram" if out_bam.endswith(".cram") else ".bam"
         extract = extract.replace(",", " ")
@@ -432,7 +531,7 @@ class Bam:
             realign_ref = temp_file.name
         _ = self.make_fasta(realign_ref, target)
         chr = target.split(",")[0].split(":")[0]
-        offset = int(target.split(",")[0].split(":")[1].split("-")[0]) - 1
+        offsets = [int(t.split(":")[1].split("-")[0]) - 1 for t in target.split(",")]
         # lift over
         liftover_tmp_bam = out_prefix + ".tmp.bam"
         if (
@@ -471,6 +570,7 @@ class Bam:
                     )
                     read_names.add(read.query_name.split("/")[0] + read_seq[:20])
                 continue
+            offset = offsets[read.reference_id]
             a = pysam.AlignedSegment(out_bamh.header)
             for attr in dir(read):
                 if attr.startswith("__"):
@@ -501,8 +601,6 @@ class Bam:
         liftover_tmp_bamh.close()
         out_bamh.close()
         pysam.index(out_bam)
-        min_pos = min(mapping.keys())
-        max_pos = max(mapping.keys())
         # get the ref positions of all the unmapped reads
         ref_positions = {}
         self.init_bamh()
@@ -526,7 +624,7 @@ class Bam:
                         ]
                     )
                     for pos in ref_pos:
-                        if pos >= min_pos and pos < max_pos:
+                        if pos in mapping:
                             cur_pos[pos] = cur_pos.get(pos, 0) + 1
         self.bamh.close()
         self.bamh = None
@@ -537,7 +635,7 @@ class Bam:
             chr = region.split(":")[0]
             start, end = [int(s) for s in region.split(":")[1].split("-")]
             cur_pos = ref_positions[chr]
-            for pileupcol in self.bamh.pileup(region=region, truncate=True):
+            for pileupcol in self._pileup_safe(self.bamh, region=region, truncate=True):
                 pos = pileupcol.reference_pos
                 total_cnt = pileupcol.get_num_aligned()
                 if pos in cur_pos and cur_pos[pos] < min_ratio * total_cnt:
@@ -550,7 +648,7 @@ class Bam:
         failed_region = ",".join(failed_region)
         return {"lifted_bam": out_bam, "failed_region": failed_region}
 
-    def clip2gene(self, gene):
+    def clip2gene(self, gene: Any) -> None:
         interval = ",".join(gene.realign_regions)
         fname = os.path.basename(self.bam)
         base, ext = os.path.splitext(fname)
@@ -559,7 +657,13 @@ class Bam:
         result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
         result.check_returncode()
 
-    def call_variant_all_regions(self, gene, data, bam_key, params):
+    def call_variant_all_regions(
+        self,
+        gene: Any,
+        data: List[Dict[str, Any]],
+        bam_key: str,
+        params: Dict[str, Any],
+    ) -> None:
         if "model" not in params:
             params["model"] = self.lr_model if self.long_read else self.sr_model
         seq_key = "long_read" if self.long_read else "short_read"
@@ -573,13 +677,71 @@ class Bam:
                     params["ploidy"] = dd["cn"]
                     params["dbsnp"] = gene.diff_vcf[i]
                     reg_name = "nodel" if region_id == "nodel" else "del" + region_id
-                    out_vcf = f"{params['prefix']}.{gene.gene_names[i]}.{bam_key}.{reg_name}.raw.vcf.gz"
-                    phased_vcf = f"{params['prefix']}.{gene.gene_names[i]}.{bam_key}.{reg_name}.phased.vcf.gz"
+                    out_vcf = f"{params['prefix']}.{gene.liftover_region_names[i]}.{bam_key}.{reg_name}.raw.vcf.gz"
+                    phased_vcf = f"{params['prefix']}.{gene.liftover_region_names[i]}.{bam_key}.{reg_name}.phased.vcf.gz"
                     self.call_dnascope(out_vcf, params)
                     self.phase_vcf(out_vcf, phased_vcf, dd["cn"])
                     dd[seq_key]["raw_vcf"] = out_vcf
                     dd[seq_key]["phased_vcf"] = phased_vcf
         self.clipped_bam = None
+
+    def calc_logprob(
+        self,
+        region: str,
+        cn: int,
+        ads: Dict[int, List[int]] = {},
+        ratio: float = -1.0,
+        err_rate: float = 0.01,
+        w_ad: float = 0.5,  # weight for the allele depth (AD) evidence
+        log_prior: float = 0.0,  # log prior for CN
+    ) -> float:
+        probe_depths = [2 * d.mean for d in self.get_depth(region)]
+        num_probes = len(probe_depths)
+        if num_probes == 0:
+            return log_prior
+
+        # Step 1: Calculate total log probabilities
+        log_prob_depth_sum = sum(
+            CopyNumberModel.gamma_logpdf(
+                max(cn, err_rate), max(depth, err_rate), self.overall_depth_std
+            )
+            for depth in probe_depths
+        )
+
+        mean, std = np.mean(probe_depths), np.std(probe_depths)
+
+        if not ads or ratio < 0:
+            # No AD evidence: use depth only, scaled by size
+            scaled_total_log_prob = log_prob_depth_sum + log_prior
+            self.logger.debug(
+                f"Region {region} (CN={cn}, mean={mean:.3f}, std={std:.3f}): logprob={scaled_total_log_prob:.6f} (depth_sum={log_prob_depth_sum:.6f}, prior={log_prior:.6f})"
+            )
+            return scaled_total_log_prob
+
+        p = np.clip(ratio, err_rate, 1 - err_rate)
+        # Calculate mean ADS ratio
+        a_ads = np.array(list(ads.values()))
+        total_first = np.sum(a_ads[:, 0])
+        total_both = np.sum(a_ads)
+        mean_ads_ratio = total_first / total_both if total_both > 0 else -1
+
+        # Calculate AD log probability sum
+        log_prob_ad_sum = binom.logpmf(
+            k=a_ads[:, 0], n=np.sum(a_ads, axis=1), p=p
+        ).sum()
+
+        # Step 2: Hybrid approach - normalize to comparable scales
+        avg_log_prob_depth = log_prob_depth_sum / num_probes
+        avg_log_prob_ad = log_prob_ad_sum / len(ads)
+
+        # Step 3: Fair weighting and scaling by segment size
+        quality_score = (1 - w_ad) * avg_log_prob_depth + w_ad * avg_log_prob_ad
+        scaled_total_log_prob = quality_score * num_probes + log_prior
+
+        self.logger.debug(
+            f"Region {region} (CN={cn}, mean={mean:.3f}, std={std:.3f}, ratio={ratio:.3g}, mean_ads_ratio={mean_ads_ratio:.3g}): logprob={scaled_total_log_prob:.6f} (avg_depth={avg_log_prob_depth:.6f}, avg_ad={avg_log_prob_ad:.6f}, quality={quality_score:.6f}, prior={log_prior:.6f})"
+        )
+        return scaled_total_log_prob
 
 
 class CopyNumberModel:
@@ -596,14 +758,21 @@ class CopyNumberModel:
     error_rate = 0.01
     PileUpRecord = namedtuple("PileUpRecord", "pos, MQ, AD")
 
-    def __init__(self, read_data, gene, param):
+    def __init__(
+        self, read_data: Dict[str, Any], gene: Any, param: Dict[str, Any]
+    ) -> None:
         self.read_data = read_data
         self.gene = gene
         self.params = param
-        self.logger = get_logger(self.__class__.__name__, "INFO")
+        self.logger = get_logger(self.__class__.__name__)
 
     @staticmethod
-    def get_ads(fname, reg, filter_fn=None, with_coor=False):
+    def get_ads(
+        fname: str,
+        reg: Union[str, IntervalList, None],
+        filter_fn: Optional[Callable] = None,
+        with_coor: bool = False,
+    ) -> Union[List[List[int]], Dict[int, List[int]]]:
         if reg is None:
             return []
         if isinstance(reg, str):
@@ -624,9 +793,16 @@ class CopyNumberModel:
             return dict(zip(pos, ads))
         return ads
 
-    def get_ads_bygiven(self, bam, given, reg, filter_fn=None, alt=False):
+    def get_ads_bygiven(
+        self,
+        bam: "Bam",
+        given: str,
+        reg: Union[str, IntervalList, None],
+        filter_fn: Optional[Callable] = None,
+        alt: bool = False,
+    ) -> Dict[int, List[int]]:
         if reg is None:
-            return []
+            return {}
         if isinstance(reg, str):
             reg = IntervalList(region=reg)
         vcf = vcflib.VCF(given)
@@ -640,7 +816,7 @@ class CopyNumberModel:
                 and len(v.alt[0]) == 1
             ):
                 region = f"{v.chrom}:{v.pos + 1}-{v.pos + 1}"
-                for pileupcol in bamh.pileup(region=region, truncate=True):
+                for pileupcol in bam._pileup_safe(bamh, region=region, truncate=True):
                     pos = pileupcol.reference_pos
                     if pos != v.pos:
                         continue
@@ -661,9 +837,11 @@ class CopyNumberModel:
                     cnts[v.pos] = [ref_cnt, alt_cnt]
                 if alt and v.pos in cnts:
                     cnts[v.pos] += [0, 0]
-                    pos2 = self.gene.mapping.g1tog2[v.pos]
+                    pos2 = self.gene.mapping.get(v.pos)
                     region = f"{v.chrom}:{pos2 + 1}-{pos2 + 1}"
-                    for pileupcol in bamh.pileup(region=region, truncate=True):
+                    for pileupcol in bam._pileup_safe(
+                        bamh, region=region, truncate=True
+                    ):
                         pos = pileupcol.reference_pos
                         if pos != pos2:
                             continue
@@ -679,234 +857,137 @@ class CopyNumberModel:
         return cnts
 
     @staticmethod
-    def gamma_logpdf(n, mean_values, sigma):
+    def gamma_logpdf(n: float, mean_values: float, sigma: float) -> float:
         n = max(0.01, n)
-        k = n**2 / sigma**2  # Shape parameter
-        theta = sigma**2 / n  # Scale parameter
-        return gamma.logpdf(mean_values, a=k, scale=theta)
+        sigma = max(0.01, sigma)
+        shape = (n / sigma) ** 2  # Shape parameter
+        scale = sigma**2 / n
+        return gamma.logpdf(mean_values, a=shape, scale=scale)
 
-    @staticmethod
-    def calc_loglikelihood(ads, cn1, cn2, params={}):
-        priors = params.get("priors", None)
-        segs1 = params.get("segment1", None)
-        segs2 = params.get("segment2", None)
-        segs_sum = params.get("segment_total", None)
-        err_rate = params.get("error_rate", 0.01)
-        if "default" not in priors:
-            priors["default"] = CopyNumberModel.cn_priors["priors"]
-        if priors is None:
-            log_priors = [0, 0, 0]
-        else:
-            total_priors = 0
-            for n1, p1 in priors.items():
-                for n2, p2 in priors.items():
-                    try:
-                        if n1 + n2 == cn1 + cn2:
-                            total_priors += p1 + p2
-                    except TypeError:
-                        pass
-            log_priors = [
-                np.log(priors.get(cn1, priors["default"])),
-                np.log(priors.get(cn2, priors["default"])),
-                np.log(total_priors),
-            ]
-        ratio = min(cn1 / (cn1 + cn2) + err_rate, 1 - err_rate)
-        log_cn = 0
-        for segs in segs1:
-            if segs:
-                log_cn += CopyNumberModel.gamma_logpdf(
-                    max(cn1, err_rate), segs[0], segs[1]
-                )
-        for segs in segs2:
-            if segs:
-                log_cn += CopyNumberModel.gamma_logpdf(
-                    max(cn2, err_rate), segs[0], segs[1]
-                )
-        for segs in segs_sum:
-            if segs:
-                log_cn += CopyNumberModel.gamma_logpdf(
-                    max(cn1 + cn2, err_rate), segs[0], segs[1]
-                ) + sum(log_priors)
-        if ads:
-            a_ads = np.array(ads)
-            return (
-                log_cn * len(ads)
-                + binom.logpmf(a_ads[:, 0], np.sum(a_ads, axis=1), ratio).sum()
-            )
-        return log_cn
-
-    def detect_longdels(self, non_del_region, known_dels):
+    def detect_longdels(
+        self,
+        non_del_region: str,
+        known_dels: List[str],
+        bam: "Bam",
+        longdel_names: List[str] = None,
+    ) -> List[int]:
         if not known_dels:
             return []
-        bam = self.read_data["short_read"]["liftover"]
         all_depths = [d.mean for d in bam.get_depth(non_del_region)]
         known_del_depths = []
         for del_region in known_dels:
             known_del_depths.append([d.mean for d in bam.get_depth(del_region)])
-        mean, std = statistics.mean(all_depths) * 2, statistics.stdev(all_depths) * 2
-        del_stats = [
-            (statistics.mean(d) * 2, statistics.stdev(d) * 2) for d in known_del_depths
-        ]
+        mean, std = np.mean(all_depths) * 2, np.std(all_depths) * 2
+        del_stats = [(np.mean(d) * 2, np.std(d) * 2) for d in known_del_depths]
         init_depth = int(round(mean))
-        log_pdf = dict(
-            [
-                (n, self.gamma_logpdf(n, mean, std))
-                for n in range(max(0, init_depth - 2), init_depth + 3)
-            ]
-        )
+        log_pdf = {
+            n: self.gamma_logpdf(n, mean, std)
+            for n in range(max(0, init_depth - 2), init_depth + 3)
+        }
         best_depth = max(log_pdf, key=log_pdf.get)
         diffs = []
         for i, stats in enumerate(del_stats):
             m, s = stats
+
+            # Get longdel prior if available
+            longdel_log_prior = 0.0  # Default: no prior
+            if longdel_names and i < len(longdel_names):
+                longdel_name = longdel_names[i]
+                if (
+                    hasattr(self.gene, "_longdel_log_priors")
+                    and longdel_name in self.gene._longdel_log_priors
+                ):
+                    longdel_log_prior = self.gene._longdel_log_priors[longdel_name]
+
             if best_depth > 1:
-                del_pdf = [
-                    CopyNumberModel.gamma_logpdf(best_depth - i, m, s)
-                    for i in range(best_depth)
-                ]
-                diff = del_pdf.index(max(del_pdf))
+                # Calculate likelihood + prior for each possible deletion state
+                del_posteriors = []
+                for diff in range(best_depth):
+                    likelihood = CopyNumberModel.gamma_logpdf(best_depth - diff, m, s)
+                    # Prior: deletion present if diff > 0, absent if diff == 0
+                    if diff > 0:
+                        posterior = likelihood + longdel_log_prior
+                    else:
+                        # Use log(1 - p) for no deletion, where p is deletion probability
+                        no_del_log_prior = (
+                            np.log(1 - np.exp(longdel_log_prior))
+                            if longdel_log_prior > -1e6
+                            else 0.0
+                        )
+                        posterior = likelihood + no_del_log_prior
+                    del_posteriors.append(posterior)
+
+                diff = del_posteriors.index(max(del_posteriors))
                 diffs.append(diff)
             else:
+                # Simple case: use prior to bias decision
                 if mean - m > std + s and m < 0.5:
-                    diffs.append(1)
+                    # Evidence suggests deletion
+                    if longdel_log_prior > np.log(0.5):  # Prior favors deletion
+                        diffs.append(1)
+                    else:
+                        diffs.append(1 if longdel_log_prior > np.log(0.1) else 0)
                 else:
-                    diffs.append(0)
+                    # Weak evidence: use prior
+                    diffs.append(1 if longdel_log_prior > np.log(0.5) else 0)
         return diffs
 
-    def call_cn(self, data, seq_keys, params):
-        if "cn_priors" not in params:
-            params["priors"] = self.cn_priors
-        if "error_rate" not in params:
-            params["error_rate"] = self.error_rate
-        total_cn_ub = 8
-        cn1_ub = 8
-        cn2_ub = 8
-        for region_id, d in data[0]["orig"].items():
-            self.logger.debug(f"Call copy number for {region_id}")
-            segs1 = []
-            segs2 = []
-            segs_total = []
-            var_ads = []
-            for seq_key in seq_keys:
-                liftover = data[0]["liftover"][region_id][seq_key]
-                orig = d[seq_key]
-                orig2 = data[1]["orig"][region_id][seq_key]
-                liftover_region = liftover["region"]
-                high_mq_region = orig["region"]
-                high_mq_region2 = orig2["region"]
-                dps = [
-                    [2 * d.mean for d in bam.get_depth(region)]
-                    for bam, region in (
-                        (self.read_data[seq_key]["bam"], high_mq_region),
-                        (self.read_data[seq_key]["bam"], high_mq_region2),
-                        (self.read_data[seq_key]["liftover"], liftover_region),
-                    )
-                ]
-                read_stats = [
-                    (statistics.mean(dp), statistics.stdev(dp)) if dp else None
-                    for dp in dps
-                ]
-                segs1.append(read_stats[0])
-                segs2.append(read_stats[1])
-                segs_total.append(read_stats[2])
-                liftover_bam = self.read_data[seq_key]["liftover"]
-                bam = self.read_data[seq_key]["bam"]
-                excl_pos = []
-                pos_ads1 = self.get_ads_bygiven(
-                    bam,
-                    self.gene.diff_vcf[0],
-                    data[0]["orig"][region_id]["region"],
-                    filter_fn=lambda v: v.MQ > 50,
-                    alt=True,
+    def get_segdup_ads(self, seq_key: str) -> Dict[int, List[int]]:
+        liftover_bam = self.read_data[seq_key]["liftover"]
+        bam = self.read_data[seq_key]["bam"]
+        excl_pos = []
+        var_ads = []
+        liftover_region = (
+            [",".join(self.gene.liftover_target_regions)]
+            if len(self.gene.diff_vcf) == 1
+            else self.gene.liftover_target_regions
+        )
+        for i in range(len(self.gene.diff_vcf)):
+            pos_ads1 = self.get_ads_bygiven(
+                bam,
+                self.gene.diff_vcf[i],
+                self.gene.high_mq_regions[seq_key],
+                filter_fn=lambda v: v.MQ > 50,
+                alt=True,
+            )
+            excl_pos += [
+                pos
+                for pos, ads in pos_ads1.items()
+                if (
+                    ads[0] + ads[1] > 0
+                    and (ads[1] / (ads[0] + ads[1]) > 0.1 or ads[1] > 5)
                 )
-                excl_pos += [
-                    pos
-                    for pos, ads in pos_ads1.items()
-                    if (
-                        ads[0] + ads[1] > 0
-                        and (ads[1] / (ads[0] + ads[1]) > 0.1 or ads[1] > 5)
-                    )
-                    or (
-                        ads[2] + ads[3] > 0
-                        and (ads[3] / (ads[2] + ads[3]) > 0.1 or ads[3] > 5)
-                    )
-                ]
-                pos_ads = self.get_ads_bygiven(
-                    liftover_bam, self.gene.diff_vcf[0], liftover_region
+                or (
+                    ads[2] + ads[3] > 0
+                    and (ads[3] / (ads[2] + ads[3]) > 0.1 or ads[3] > 5)
                 )
-                var_ads += [
-                    ads
-                    for p, ads in pos_ads.items()
-                    if p not in excl_pos
-                    and (
-                        p not in pos_ads1
-                        or pos_ads1[p][0] - ads[0] <= 5
-                        and pos_ads1[p][2] - ads[1] <= 5
-                    )
-                ]
-            params["segment1"] = segs1
-            params["segment2"] = segs2
-            params["segment_total"] = segs_total
-            self.logger.debug(f"Depth for Gene1 {segs1}")
-            self.logger.debug(f"Depth for Gene2 {segs2}")
-            self.logger.debug(f"Depth for liftover in Gene1 {segs_total}")
-            if var_ads:
-                self.logger.debug(
-                    f"AD stats {statistics.mean([a[0] / sum(a) if sum(a) > 0 else 0 for a in var_ads])}, {statistics.stdev([a[0] / sum(a) if sum(a) > 0 else 0 for a in var_ads])}"
+            ]
+            pos_ads = self.get_ads_bygiven(
+                liftover_bam, self.gene.diff_vcf[i], liftover_region[i]
+            )
+            var_ads += [
+                (p, ads)
+                for p, ads in pos_ads.items()
+                if p not in excl_pos
+                and (
+                    p not in pos_ads1
+                    or pos_ads1[p][0] - ads[0] <= 5
+                    and pos_ads1[p][2] - ads[1] <= 5
                 )
-            else:
-                self.logger.debug("AD stats: None")
-            probs = {}
-            best_probs = -1e9
-            best_total = -1
-            for total_cn in range(1, total_cn_ub + 1):
-                probs1 = {}
-                for cn1 in range(max(0, total_cn - cn2_ub), min(cn1_ub, total_cn) + 1):
-                    probs1[cn1] = self.calc_loglikelihood(
-                        var_ads, cn1, total_cn - cn1, params
-                    )
-                max_prob = max(probs1.values())
-                if best_total == -1 or max_prob > best_probs:
-                    best_total = total_cn
-                    best_probs = max_prob
-                probs[total_cn] = probs1
-            probs1 = probs[best_total]
-            if len(probs1) == 1 or max(probs1.values()) != min(probs1.values()):
-                best_cn1 = max(probs1, key=probs1.get)
-                best_cn2 = best_total - best_cn1
-            else:
-                best_cn1 = best_cn2 = -1
-                print("Insufficient information to determine the copy numbers.")
-            d["total_cn"] = best_total
-            d["cn"] = best_cn1
-            data[1]["orig"][region_id]["total_cn"] = best_total
-            data[1]["orig"][region_id]["cn"] = best_cn2
-            if region_id == "nodel":
-                total_cn_ub = best_total
-                cn1_ub = best_cn1
-                cn2_ub = best_cn2
-            if region_id in data[0]["liftover"]:
-                data[0]["liftover"][region_id]["cn"] = best_total
-            if region_id in data[1]["liftover"]:
-                data[1]["liftover"][region_id]["cn"] = best_total
-        for i, d in enumerate(data):
-            for region_id, dd in d["liftover"].items():
-                if "cn" not in dd:
-                    dd["cn"] = data[1 - i]["orig"]["nodel"]["cn"]
-        return data
+            ]
+        return dict(var_ads)
 
 
 class Phased_vcf:
     max_mismatch = 0.25
 
-    def __init__(self, data, gene, read_data):
-        self.data = data
+    def __init__(self, gene: Any, read_data: Dict[str, Any]) -> None:
         self.gene = gene
         self.read_data = read_data
-        self.debug = False
-        self.logger = get_logger(self.__class__.__name__, "INFO")
+        self.logger = get_logger(self.__class__.__name__)
 
     @staticmethod
-    def _annotate(v, dp=None):
+    def _annotate(v: Any, dp: Optional[int] = None) -> None:
         gt = [int(g) for g in re.split(r"\||/", v.samples[0]["GT"])]
         ac = [gt.count(i + 1) for i in range(len(v.alt))]
         af = [a / len(gt) for a in ac]
@@ -923,7 +1004,7 @@ class Phased_vcf:
         del v.samples[0]["AD"]
 
     @staticmethod
-    def split_homvar(v, cns):
+    def split_homvar(v: Any, cns: Tuple[int, int]) -> Optional[Any]:
         v1 = None
         gts = set(re.split(r"\||/", v.samples[0]["GT"]))
         if len(gts) == 1 and gts != set("0"):
@@ -933,7 +1014,13 @@ class Phased_vcf:
             Phased_vcf._annotate(v1)
         return v1
 
-    def proc_phased(self, phased, cns, matched, gene_id):
+    def proc_phased(
+        self,
+        phased: List[Any],
+        cns: Tuple[int, int],
+        matched: Dict[int, Any],
+        gene_id: int,
+    ) -> Tuple[List[Any], List[Any]]:
         def _proc_homvar():
             for v in phased:
                 v1 = self.split_homvar(v, cns)
@@ -943,6 +1030,7 @@ class Phased_vcf:
         v1s = []
         all_alleles = []
         for v in phased:
+            assert sum(cns) == len(re.split(r"\||/", v.samples[0]["GT"]))
             if v.id != ".":
                 all_alleles.append(
                     "_".join(
@@ -1016,7 +1104,7 @@ class Phased_vcf:
                 ]
             )
             if alt_alleles.difference(gene2_alleles):
-                label.append(self.gene.gene_names[gene_id])
+                label.append(self.gene.liftover_region_names[gene_id])
                 v1 = copy.deepcopy(v)
                 v1.samples[0]["GT"] = "|".join(
                     ["1" if a in alt_alleles else "0" for a in gene1_alleles]
@@ -1027,24 +1115,28 @@ class Phased_vcf:
         return phased, v1s
 
     @staticmethod
-    def match(vars, v1s, v2s):
+    def match(
+        vars: List[Tuple[Any, Any]],
+        v1s: List[Tuple[int, str, int, Any]],
+        v2s: List[Tuple[int, str, int, Any]],
+    ) -> Dict[int, List[Optional[Tuple[str, List[str], Any]]]]:
         matched = {}
         for pos, key, _, v in v1s:
             matched.setdefault(pos, [None, None, None])[0] = (
                 key,
-                re.split("\||/", v.samples[0]["GT"]),
+                re.split(r"\||/", v.samples[0]["GT"]),
                 v,
             )
         for pos, key, _, v in v2s:
             matched.setdefault(pos, [None, None, None])[1] = (
                 key,
-                re.split("\||/", v.samples[0]["GT"]),
+                re.split(r"\||/", v.samples[0]["GT"]),
                 v,
             )
         for key, v in vars:
             matched.setdefault(v.pos, [None, None, None])[2] = (
                 key,
-                re.split("\||/", v.samples[0]["GT"]),
+                re.split(r"\||/", v.samples[0]["GT"]),
                 v,
             )
         keep = {}
@@ -1056,6 +1148,8 @@ class Phased_vcf:
                 continue
             if v1 and "0" in v1[1] or v2 and "0" in v2[1]:
                 continue
+            if any(x not in ("0", "1") for x in v[1]):
+                continue
             if (
                 v1
                 and v1[1].count("1") == v[1].count("1")
@@ -1065,38 +1159,7 @@ class Phased_vcf:
                 keep[pos] = vs
         return keep
 
-    @staticmethod
-    def save_vars(vcf_template, out_vcf, vars, extra_header=None, sort_vars=False):
-        in_vcf = vcflib.VCF(vcf_template)
-        out_vcf = vcflib.VCF(out_vcf, "w")
-        out_vcf.copy_header(in_vcf, update=extra_header)
-        out_vcf.emit_header()
-        if sort_vars:
-            vars_list = [(v.pos, i, v) for i, v in enumerate(vars)]
-            vars = [v[2] for v in sorted(vars_list)]
-        for v in vars:
-            out_vcf.emit(v)
-        out_vcf.close()
-        in_vcf.close()
-
-    def concat_regional_vcf(self):
-        for seq_key in self.read_data:
-            params = self.read_data[seq_key]["params"]
-            for i, d in enumerate(self.data):
-                for bam_key, dd in d.items():
-                    vcfs = []
-                    for region_id, reg_data in dd.items():
-                        if region_id != "all" and "result_vcf" in reg_data[seq_key]:
-                            vcfs.append(reg_data[seq_key]["result_vcf"])
-                    if vcfs:
-                        out_fname = f"{params['prefix']}.{self.gene.gene_names[i]}.{bam_key}.vcf.gz"
-                        self.concat(vcfs, out_fname)
-                        dd.setdefault("all", {})[seq_key] = {
-                            "result_vcf": out_fname,
-                            "region": self.gene.gene_regions[i],
-                        }
-
-    def concat(self, in_vcfs, out_fname):
+    def concat(self, in_vcfs: List[str], out_fname: str) -> None:
         vcfs = [vcflib.VCF(vcf) for vcf in in_vcfs]
         out_vcf = vcflib.VCF(out_fname, "w")
         out_vcf.copy_header(vcfs[0])
@@ -1106,7 +1169,7 @@ class Phased_vcf:
         for i, vcf in enumerate(vcfs):
             for v in vcf:
                 if cn[i] < 0:
-                    cn[i] = len(re.split("\||/", v.samples[0]["GT"]))
+                    cn[i] = len(re.split(r"\||/", v.samples[0]["GT"]))
                 heapq.heappush(vars, (v.pos, f"{v.ref}_{','.join(v.alt)}", v))
         while vars:
             _, _, v = heapq.heappop(vars)
@@ -1158,111 +1221,13 @@ class Phased_vcf:
             elif cur[0] and _key(cur[0]) == _key(cur[2]):
                 yield cur[2]
 
-    def process(self):
-        label_header = (
-            '##INFO=<ID=LABEL,Number=1,Type=String,Description="LABEL for GENE1 or GENE2">',
-        )
-        for i, d in enumerate(self.data):
-            result_vcfs = {}
-            result_liftover_vcfs = {}
-            for region_id, dd in d["orig"].items():
-                for seq_key, data in self.read_data.items():
-                    seq_data = dd[seq_key]
-                    params = data["params"]
-                    if seq_key not in result_vcfs:
-                        result_vcfs[seq_key] = []
-                        result_liftover_vcfs[seq_key] = []
-                    liftover_vcf = d["liftover"][region_id][seq_key].get("phased_vcf")
-                    if not liftover_vcf:
-                        continue
-                    vcf1 = seq_data.get("phased_vcf")
-                    vcf2 = (
-                        self.data[1 - i]["orig"]
-                        .get(region_id, self.data[1 - i]["orig"]["nodel"])[seq_key]
-                        .get("phased_vcf")
-                    )
-                    cn1 = dd["cn"]
-                    cn2 = dd["total_cn"] - cn1
-                    if cn1 == 0:
-                        continue
-                    run_params = {
-                        "region": dd["region"],
-                        "orig_region": dd[seq_key]["region"],
-                        "gene_id": i,
-                        "seq": seq_key,
-                        "cns": (cn1, cn2),
-                        "cn_diff": d["orig"]["nodel"]["cn"] - cn1,
-                        "mismatch": params.get("max_mismatch", self.max_mismatch),
-                    }
-                    out_liftover, out_vcf1 = self.assign(
-                        liftover_vcf, vcf1, vcf2, run_params
-                    )
-                    reg_name = "nodel" if region_id == "nodel" else "del" + region_id
-                    out_liftover_fname = f"{params['prefix']}.{self.gene.gene_names[i]}.{reg_name}.liftover.labeled.vcf.gz"
-                    out_vcf1_fname = f"{params['prefix']}.{self.gene.gene_names[i]}.{reg_name}.vcf.gz"
-                    # result_vcfs[seq_key].append(out_vcf1_fname)
-                    # result_liftover_vcfs[seq_key].append(out_liftover_fname)
-                    vcf_tmpl = vcf1 if vcf1 else (vcf2 if vcf2 else liftover_vcf)
-                    self.save_vars(vcf_tmpl, out_vcf1_fname, out_vcf1)
-                    self.save_vars(
-                        liftover_vcf,
-                        out_liftover_fname,
-                        out_liftover,
-                        extra_header=label_header,
-                    )
-                    d["liftover"][region_id][seq_key]["result_vcf"] = out_liftover_fname
-                    seq_data["result_vcf"] = out_vcf1_fname
-            # concat the vcf for either long and short reads from different regions
-        self.concat_regional_vcf()
-        for i, d in enumerate(self.data):
-            if d["orig"]["nodel"]["cn"] == 0:
-                continue
-            # combine different seq_keys
-            out_vcf1_fname = f"{params['outdir']}/{params['sample_name']}.{self.gene.gene_names[i]}.result.vcf.gz"
-            if len(self.read_data) > 1:
-                params = self.read_data["short_read"]["params"]
-                long_vcf1 = vcflib.VCF(d["orig"]["all"]["long_read"]["result_vcf"])
-                long_vcf2 = vcflib.VCF(
-                    self.data[1 - i]["orig"]["all"]["long_read"]["result_vcf"]
-                )
-                short_vcf = vcflib.VCF(d["liftover"]["all"]["short_read"]["result_vcf"])
-                short_vcf1 = vcflib.VCF(d["orig"]["all"]["short_read"]["result_vcf"])
-                short_vcf2 = vcflib.VCF(
-                    self.data[1 - i]["orig"]["all"]["short_read"]["result_vcf"]
-                )
-                convert_fn = (
-                    self.gene.mapping.convert21
-                    if i == 0
-                    else self.gene.mapping.convert12
-                )
-                converted_long_vcf2 = convert_fn([v for v in long_vcf2], ref_diff=False)
-                converted_short_vcf2 = convert_fn(
-                    [v for v in short_vcf2], ref_diff=False
-                )
-                out_vcf1 = []
-                for v1 in self.vcf_grouper(short_vcf, short_vcf1, long_vcf1):
-                    out_vcf1.append(v1)
-                self.save_vars(
-                    d["orig"]["all"]["short_read"]["result_vcf"],
-                    out_vcf1_fname,
-                    out_vcf1,
-                )
-                del d["orig"]["all"]["short_read"]["result_vcf"]
-                del d["orig"]["all"]["long_read"]["result_vcf"]
-            else:
-                shutil.copy(
-                    d["orig"]["all"]["short_read"]["result_vcf"], out_vcf1_fname
-                )
-                ext = ".tbi" if out_vcf1_fname.endswith(".gz") else ".idx"
-                shutil.copy(
-                    d["orig"]["all"]["short_read"]["result_vcf"] + ext,
-                    out_vcf1_fname + ext,
-                )
-                del d["orig"]["all"]["short_read"]["result_vcf"]
-            d["orig"]["all"]["result_vcf"] = out_vcf1_fname
-        return self.data
-
-    def assign(self, liftover_vcf, in_vcf1, in_vcf2, params):
+    def assign(
+        self,
+        liftover_vcf: str,
+        in_vcf1: Optional[str],
+        in_vcf2: Optional[str],
+        params: Dict[str, Any],
+    ) -> Tuple[List[Any], List[Any]]:
         vcf = vcflib.VCF(liftover_vcf)
         region1 = (
             IntervalList(region=params["region"]) if params.get("region") else None
@@ -1274,12 +1239,11 @@ class Phased_vcf:
         )
         liftover_region = region1  # region1.subtract(orig_region) if region1 else None
         gene_id = params["gene_id"]
-        map_fn = (
-            self.gene.mapping.interval12
-            if gene_id == 0
-            else self.gene.mapping.interval21
+        orig_region2 = (
+            IntervalList(region=self.gene.mapping.interval(orig_region))
+            if orig_region
+            else None
         )
-        orig_region2 = IntervalList(region=map_fn(orig_region)) if orig_region else None
         all_vars = [
             (f"{v.ref}_{v.alt[0]}", v)
             for v in vcf
@@ -1305,18 +1269,15 @@ class Phased_vcf:
                 and (v2.chrom, v2.pos) in orig_region2
                 and (not v2.filter or v2.filter in (".", "PASS"))
             ]
-            convert_fn = (
-                self.gene.mapping.convert21
-                if gene_id == 0
-                else self.gene.mapping.convert12
-            )
-            for v2 in convert_fn(to_convert, ref_diff=False):
+            direction = "backward" if gene_id == 0 else "forward"
+            for v2 in self.gene.mapping.convert_vars(
+                to_convert, direction, ref_diff=False
+            ):
                 heapq.heappush(all_v2s, (v2.pos, f"{v2.ref}_{v2.alt[0]}", 1, v2))
         cns = params["cns"]
         if len(cns) != 2:
-            print(
-                "ERROR: exactly two copy numbers required for the gene and its paralog seperated by comma. Example: 2,3",
-                file=sys.stderr,
+            self.logger.error(
+                "ERROR: exactly two copy numbers required for the gene and its paralog separated by comma. Example: 2,3"
             )
             sys.exit(1)
         matched = self.match(all_vars, all_v1s, all_v2s)
@@ -1370,10 +1331,9 @@ class Phased_vcf:
                     ):
                         out_v1s.append(last[3])
                     else:
-                        if self.debug:
-                            print(
-                                f"{self.gene.gene_names[gene_id]}: {v.chrom}:{v.pos} {v.ref}-{','.join(v.alt)}: original GT {last[3].samples[0]['GT']} replaced with {cur[3].samples[0]['GT']}."
-                            )
+                        self.logger.debug(
+                            f"{self.gene.liftover_region_names[gene_id]}: {v.chrom}:{v.pos} {v.ref}-{','.join(v.alt)}: original GT {last[3].samples[0]['GT']} replaced with {cur[3].samples[0]['GT']}."
+                        )
                         out_v1s.append(cur[3])
                     last = None
                     continue
@@ -1386,7 +1346,8 @@ class Phased_vcf:
             _, _, v = heapq.heappop(out_vars)
             out_liftover.append(v)
         diff = params["cn_diff"]
-        if diff:
+        if diff < 0:
+            diff = abs(diff)
             chrom = params["region"].split(":")[0]
             pos, end = [int(s) for s in params["region"].split(":")[1].split("-")]
             gt = "|".join(["0"] * cns[0] + ["1"] * diff)

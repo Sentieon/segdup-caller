@@ -1,11 +1,10 @@
 [build-system]
 requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
-#backend-path = "." # Specifies that the backend is in the current directory (can be omitted if setuptools is in requires)
 
 [project]
 name = "segdup-caller"
-version = "0.1.0" # Start with an initial version
+dynamic = ["version"]
 authors = [
     { name = "Zhipan Li", email = "zhipan.li@sentieon.com" },
 ]
@@ -29,6 +28,10 @@ dependencies = [
     "vcflib>=1.0",
     "whatshap>=2.3"
 ]
+
+# Dynamic version from __init__.py
+[tool.setuptools.dynamic]
+version = {attr = "genecaller.__version__"}
 
 # This tells pip what your package directory is
 [tool.setuptools.packages.find]
