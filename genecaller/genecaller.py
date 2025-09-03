@@ -13,8 +13,11 @@ from genecaller import __version__
 import tempfile
 import copy
 from packaging.version import Version
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import cpu_count
 
 logger = get_logger(__name__)
+
 
 CALLING_MIN_VERSIONS = {
     "sentieon driver": Version("202503"),
@@ -22,6 +25,96 @@ CALLING_MIN_VERSIONS = {
     "bcftools": Version("1.10"),
     "samtools": Version("1.16"),
 }
+
+
+def process_single_gene(gene_data: tuple) -> Dict:
+    gene, input_files, ref, base_params, gene_index = gene_data
+
+    read_data = _init_read_data(input_files, ref, base_params, gene.gene_names[0])
+
+    gene_config = gene.config
+    params = copy.deepcopy(base_params)
+    if gene_config:
+        params.update(gene_config)
+
+    # Create gene-specific prefixes to avoid file conflicts
+    gene_name = gene.gene_names[0]
+
+    # Process the gene
+    gene_logger = get_logger(f"Gene.{gene_name}")
+    gene_logger.info(f"Processing gene {', '.join(gene.gene_names)}")
+
+    try:
+        # Apply gene-specific dp_norm if configured
+        if gene_config and "dp_norm" in gene_config:
+            read_data["short_read"]["bam"].dp_norm = gene_config["dp_norm"]
+
+        # Liftover
+        gene_logger.info("Performing liftover...")
+        _perform_liftover(gene, read_data, ref)
+
+        # Configure variant calling parallelism for this gene
+        gene.variant_call_threads = min(
+            params.get("threads", 4), 8
+        )  # Cap at 8 threads for variant calling
+
+        # Copy number calling
+        gene_logger.info("Call copy number...")
+        gene.call_cn(read_data, params)
+
+        # Variant calling
+        gene_logger.info("Call small variants...")
+        gene.call_small_var()
+        gene.resolve_phased(params)
+
+        # Prepare output
+        gene_logger.info("Prepare final output")
+        gene_data_result = gene.prepare_output()
+
+        gene_logger.info(f"Completed processing gene {gene_name}")
+        return gene_data_result
+
+    except Exception as e:
+        gene_logger.error(f"Error processing gene {gene_name}: {e}")
+        raise
+
+
+def _perform_liftover(gene: "Gene", read_data: dict, ref: str) -> None:
+    """Helper function to perform liftover for a gene."""
+    for rd in read_data.values():
+        bam = rd["bam"]
+        liftover_params = copy.deepcopy(rd["params"])
+        liftover_params["prefix"] += ".liftover"
+        liftover_fname = f"{liftover_params['prefix']}.bam"
+        liftover_results = bam.liftover_combine(gene, liftover_fname)
+        liftover_bam = Bam(liftover_fname, ref, liftover_params)
+        rd["liftover"] = liftover_bam
+        rd["liftover_valid"] = [
+            IntervalList(region=gene.liftover_target_regions[i])
+            .subtract(liftover_results[i]["failed_region"])
+            .to_region_str()
+            for i in range(len(gene.liftover_region_names))
+        ]
+
+
+def _init_read_data(input_files, ref, params, gene_name) -> dict:
+    short, long = input_files
+    sr_params = copy.deepcopy(params)
+    sr_params["long_read"] = False
+    sr_params["prefix"] = (
+        f"{params['tmpdir']}/{params['sample_name']}.{gene_name}.{params['sr_prefix']}"
+    )
+    short_bam = Bam(short, ref, sr_params)
+    read_data = {"short_read": {"bam": short_bam, "params": sr_params}}
+    if long:
+        lr_params = copy.copy(params)
+        lr_params["long_read"] = True
+        lr_params["prefix"] = (
+            f"{params['tmpdir']}/{params['sample_name']}.{gene_name}.{params['lr_prefix']}"
+        )
+        long_bam = Bam(long, ref, lr_params)
+        read_data["long_read"] = {"bam": long_bam, "params": lr_params}
+    return read_data
 
 
 class GeneCaller:
@@ -34,6 +127,7 @@ class GeneCaller:
         self.read_data = {}
         self.params = {}
         self.ref = ""
+        self.reset_tmpdir = False
 
     def setup_paths(self) -> dict[str, str]:
         cmds = {}
@@ -44,42 +138,10 @@ class GeneCaller:
             cmds[cmd.split()[0]] = cmd_path
         return cmds
 
-    def init_read_data(self) -> None:
-        short, long = self.input
-        sr_params = copy.copy(self.params)
-        sr_params["long_read"] = False
-        sr_params["prefix"] = sr_params["sr_prefix"]
-        short_bam = Bam(short, self.ref, sr_params)
-        read_data = {"short_read": {"bam": short_bam, "params": sr_params}}
-        if long:
-            lr_params = copy.copy(self.params)
-            lr_params["long_read"] = True
-            lr_params["prefix"] = lr_params["lr_prefix"]
-            long_bam = Bam(long, self.ref, lr_params)
-            read_data["long_read"] = {"bam": long_bam, "params": lr_params}
-        self.read_data = read_data
-
     def reset_read_data(self, params: Dict[str, Any]) -> None:
         for r in self.read_data.values():
             r["bam"].reset()
         self.params = params
-
-    def liftover(self, gene: "Gene") -> None:
-        for name, rd in self.read_data.items():
-            logger.info(f"Performing liftover on {name}...")
-            bam = rd["bam"]
-            params = copy.deepcopy(rd["params"])
-            params["prefix"] += ".liftover"
-            liftover_fname = f"{params['prefix']}.bam"
-            liftover_results = bam.liftover_combine(gene, liftover_fname)
-            liftover_bam = Bam(liftover_fname, self.ref, params)
-            rd["liftover"] = liftover_bam
-            rd["liftover_valid"] = [
-                IntervalList(region=gene.liftover_target_regions[i])
-                .subtract(liftover_results[i]["failed_region"])
-                .to_region_str()
-                for i in range(len(gene.liftover_region_names))
-            ]
 
     def save_data(
         self, data: Dict[str, Dict[str, Any]], outfile: str, fmt: str = "auto"
@@ -100,38 +162,6 @@ class GeneCaller:
                 serialized = yaml.dump(data, default_flow_style=False)
             fout.write(serialized)
 
-    def process_gene(self, gene: "Gene") -> Dict[str, Any]:
-        logger.info(f"Processing gene {', '.join(gene.gene_names)}")
-        gene_config = gene.config
-        orig_params = self.params
-        if gene_config:
-            self.params.update(gene_config)
-            if "dp_norm" in gene_config:
-                self.read_data["short_read"]["bam"].dp_norm = gene_config["dp_norm"]
-        self.read_data["short_read"]["params"]["prefix"] = (
-            f"{self.params['tmpdir']}/{self.params['sample_name']}.{gene.gene_names[0]}.{self.params['sr_prefix']}"
-        )
-        if "long_read" in self.read_data:
-            self.read_data["long_read"]["params"]["prefix"] = (
-                f"{self.params['tmpdir']}/{self.params['sample_name']}.{gene.gene_names[0]}.{self.params['lr_prefix']}"
-            )
-
-        self.liftover(gene)
-
-        logger.info("Call copy number...")
-        gene.call_cn(self.read_data, self.params)
-
-        # variant calling with short reads for each region
-        logger.info("Call small variants...")
-        gene.call_small_var()
-        gene.resolve_phased(self.params)
-
-        # save result
-        logger.info("Prepare final output")
-        gene_data = gene.prepare_output()
-        self.reset_read_data(orig_params)
-        return gene_data
-
     def print_param(self) -> None:
         logger.info("Input loaded:")
         logger.info(f" * Reference file: {self.ref}")
@@ -142,6 +172,7 @@ class GeneCaller:
         logger.info(
             f" * Genes: {' '.join([g.gene_names[0] for g in self.genes if g != 'main'])}"
         )
+        logger.info(f" * Parallel threads: {self.params['threads']}")
 
     def load_params(self) -> None:
         default_cfg_fname = get_data_file("genes.yaml")
@@ -199,6 +230,13 @@ class GeneCaller:
             help="Keep temporary files for debugging",
         )
         parser.add_argument(
+            "--threads",
+            "-t",
+            type=int,
+            default=cpu_count(),
+            help="Number of parallel threads for gene processing (default: number of CPU count)",
+        )
+        parser.add_argument(
             "--log_level",
             choices=["DEBUG", "INFO", "WARNING", "ERROR"],
             default="INFO",
@@ -239,6 +277,12 @@ class GeneCaller:
         self.genes = [Gene(config[g]) for g in genes]
         self.input = args.short, args.long
         self.ref = args.reference
+
+        if args.threads > cpu_count():
+            logger.warning(
+                f"Requested {args.threads} threads, but only {cpu_count()} CPU cores available. Using {cpu_count()} threads."
+            )
+            args.threads = cpu_count()
         if not args.sample_name:
             bam = load_bam(args.short, args.reference)
             rg = bam.header.to_dict().get("RG", [])
@@ -256,6 +300,10 @@ class GeneCaller:
             tmpdir = tempfile.mkdtemp(dir=sent_tmpdir, prefix="job")
         else:
             tmpdir = tempfile.mkdtemp(dir=args.outdir, prefix=f"{sample_name}_tmp")
+            os.environ["SENTIEON_TMPDIR"] = (
+                tmpdir  # this is needed for parallel jobs of Sentieon not conflicting each other
+            )
+            self.reset_tmpdir = True
         # Set global logging level
         set_global_log_level(args.log_level)
         # Update the logger level since it was created before global level was set
@@ -272,10 +320,10 @@ class GeneCaller:
                 "logger": logger,
                 "keep_tmp": args.keep_temp,
                 "log_level": args.log_level,
+                "threads": args.threads,
             }
         )
         self.print_param()
-        self.init_read_data()
 
     def _validate_input_files(self) -> None:
         """Validate that all required input files and their indices exist."""
@@ -350,6 +398,59 @@ class GeneCaller:
 
         logger.info("All required input files and indices validated successfully")
 
+    def process_genes(self) -> Dict[str, Any]:
+        # Prepare task arguments for each gene
+        gene_tasks = []
+        for i, gene in enumerate(self.genes):
+            gene_task = (
+                gene,  # Gene object
+                self.input,  # (short_bam, long_bam)
+                self.ref,  # Reference file
+                self.params,  # Base parameters
+                i + 1,  # Gene index for logging
+            )
+            gene_tasks.append(gene_task)
+
+        results = {}
+        max_workers = min(self.params["threads"], len(self.genes))
+
+        if max_workers > 1:
+            # Use a process pool for parallel processing
+            try:
+                with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                    # submit task
+                    future_results = {
+                        executor.submit(process_single_gene, task): task[0].gene_names[
+                            0
+                        ]
+                        for task in gene_tasks
+                    }
+                # Collect results
+                for returned, gene_name in future_results.items():
+                    try:
+                        gene_result = returned.result()
+                        results[gene_name] = gene_result
+                        logger.info(f"Completed {gene_name}")
+                    except Exception as e:
+                        logger.error(f"Failed to process {gene_name}: {e}")
+                        raise
+
+            except Exception as e:
+                logger.error(f"Parallel processing failed: {e}")
+                raise
+        else:
+            for task in gene_tasks:
+                gene_name = task[0].gene_names[0]
+                try:
+                    gene_result = process_single_gene(task)
+                    results[gene_name] = gene_result
+                    logger.info(f"Completed {gene_name}")
+                except Exception as e:
+                    logger.error(f"Failed to process {gene_name}: {e}")
+                    raise
+
+        return results
+
     def call(self) -> None:
         self.load_params()
 
@@ -357,10 +458,19 @@ class GeneCaller:
         self._validate_input_files()
 
         result = {}
-        for g in self.genes:
-            result[g.gene_names[0]] = self.process_gene(g)
+
+        # Use parallel processing if multiple genes and threads > 1
+        if len(self.genes) > 1 and self.params["threads"] > 1:
+            logger.info(
+                f"Processing {len(self.genes)} genes in parallel using {self.params['threads']} threads"
+            )
+        result = self.process_genes()
+
         self.save_data(
             result, f"{self.params['outdir']}/{self.params['sample_name']}.yaml"
         )
         if not self.params["keep_tmp"]:
             shutil.rmtree(self.params["tmpdir"])
+
+        if self.reset_tmpdir:
+            os.environ.pop("SENTIEON_TMPDIR", None)

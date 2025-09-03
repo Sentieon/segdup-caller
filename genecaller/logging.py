@@ -1,16 +1,21 @@
 import colorlog
 import logging
+import sys
 
 # Global log level that can be set programmatically
 _global_log_level = None
 
-handler = colorlog.StreamHandler()
-handler.setFormatter(
-    colorlog.ColoredFormatter("%(log_color)s%(levelname)s:%(name)s:%(message)s")
-)
+use_color = sys.stdout.isatty()
+
+if use_color:
+    handler = colorlog.StreamHandler()
+    handler.setFormatter(colorlog.ColoredFormatter("%(log_color)s%(levelname)s:%(name)s:%(message)s"))
+else:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+
 # Set a default level for the handler
 handler.setLevel(logging.INFO)
-
 
 def set_global_log_level(level):
     """Set the global log level for all loggers."""

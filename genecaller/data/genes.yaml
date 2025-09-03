@@ -135,5 +135,5 @@ HBA:
   map: data/HBA.dat
 main:
   cnv_model: data/SentieonGeneCaller0.1.bundle/cnv.model
-  min_map_qual: 40
+  min_map_qual: 45
   cn_prior_std: 2

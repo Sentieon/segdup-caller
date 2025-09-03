@@ -2,6 +2,7 @@ from .util import IntervalList, GeneMapping, get_data_file
 from .logging import get_logger
 import copy
 from genecaller.bam_process import CopyNumberModel, Phased_vcf
+from concurrent.futures import ThreadPoolExecutor
 import heapq
 import vcflib
 import pandas as pd
@@ -272,7 +273,7 @@ class Gene:
         assert all(self.diff_vcf)
         mapping_file = get_data_file(cfg["map"])
         assert mapping_file is not None, f"Mapping file not found: {cfg['map']}"
-        self.mapping = GeneMapping(mapping_file) #, False)
+        self.mapping = GeneMapping(mapping_file)  # , False)
         if "liftover_regions" in cfg:
             self.liftover_region_names = []
             self.liftover_target_regions = []
@@ -297,6 +298,7 @@ class Gene:
         ]
         self.setup_regions(cfg)
         self.chr = cfg["gene_regions"][0].split(",")[0].split(":")[0]
+        self.variant_call_threads = 4  # Default to 4 threads for vara
         self.logger = get_logger(self.__class__.__name__)
         self._initialize_log_priors()
         self._initialize_longdel_priors(cfg)
@@ -1163,16 +1165,46 @@ class Gene:
         self.segmentation()
         self.solve_cn()
 
+    def _call_variant(self, params: dict) -> bool:
+        """Helper method to call variants for a single region."""
+        bam = params["bam"]
+        region = params["region"]
+        out_vcf = params["out_vcf"]
+        phased_vcf = params["phased_vcf"]
+        seq_key = params["seq_key"]
+        bam_type = params["bam_type"]
+
+        try:
+            # Call variants and phase
+            bam.call_variant(out_vcf, params)
+            bam.phase_vcf(out_vcf, phased_vcf, params["ploidy"])
+
+            self.logger.debug(
+                f"Completed variant calling for {bam_type} {seq_key} bam in region {region}"
+            )
+
+            return True
+        except Exception as e:
+            self.logger.error(
+                f"Error calling variants for {bam_type} {seq_key} bam in region {region}: {e}"
+            )
+            return False
+
     def call_small_var(self) -> None:
         seq_keys = ["short_read"]
         if "long_read" in self.read_data:
             seq_keys.append("long_read")
+        tasks = []
         for seq_key in seq_keys:
             bam = self.read_data[seq_key]["bam"]
-            params = self.read_data[seq_key]["params"]
+            orig_params = self.read_data[seq_key]["params"]
+            orig_params["seq_key"] = seq_key
+            orig_params["bam_type"] = "orig"
             for i, r in enumerate(self.merged_regions):
                 if not r.cn:
                     continue
+                params = copy.deepcopy(orig_params)
+                params["bam"] = bam
                 params["region"] = r.region
                 params["ploidy"] = r.cn
                 if len(self.diff_vcf) == 1:
@@ -1182,35 +1214,66 @@ class Gene:
                         params.pop("dbsnp", None)
                     else:
                         params["dbsnp"] = self.diff_vcf[r.dup - 1]
-                # out_vcf = f"{params['prefix']}.{r.name}.raw.vcf.gz"
-                # phased_vcf = f"{params['prefix']}.{r.name}.phased.vcf.gz"
-                # if os.path.exists(out_vcf) or os.path.exists(phased_vcf):
-                out_vcf = f"{params['prefix']}.{r.name}.{i}.raw.vcf.gz"
-                phased_vcf = f"{params['prefix']}.{r.name}.{i}.phased.vcf.gz"
-                bam.call_variant(out_vcf, params)
-                bam.phase_vcf(out_vcf, phased_vcf, r.cn)
-                r.called_vcf[seq_key] = {"orig": out_vcf}
-                r.phased_vcf[seq_key] = {"orig": phased_vcf}
+                params["out_vcf"] = f"{params['prefix']}.{r.name}.{i}.raw.vcf.gz"
+                params["phased_vcf"] = f"{params['prefix']}.{r.name}.{i}.phased.vcf.gz"
+                r.called_vcf[seq_key] = {"orig": params["out_vcf"]}
+                r.phased_vcf[seq_key] = {"orig": params["phased_vcf"]}
+                tasks.append(params)
             bam = self.read_data[seq_key]["liftover"]
+            orig_params["bam_type"] = "liftover"
             for i, regions in enumerate(self.merged_liftover_segdup_regions):
-                for r in regions:
+                for j, r in enumerate(regions):
                     if not r.cn:
                         continue
+                    params = copy.deepcopy(orig_params)
+                    params["bam"] = bam
                     params["region"] = r.region
                     params["ploidy"] = r.cn
                     if len(self.diff_vcf) == 1:
                         params["dbsnp"] = self.diff_vcf[0]
                     else:
                         params["dbsnp"] = self.diff_vcf[i]
-                    # out_vcf = f"{params['prefix']}.{r.name}.raw.vcf.gz"
-                    # phased_vcf = f"{params['prefix']}.{r.name}.phased.vcf.gz"
-                    # if os.path.exists(out_vcf) or os.path.exists(phased_vcf):
-                    out_vcf = f"{params['prefix']}.{r.name}.{i}.raw.vcf.gz"
-                    phased_vcf = f"{params['prefix']}.{r.name}.{i}.phased.vcf.gz"
-                    bam.call_dnascope(out_vcf, params)
-                    bam.phase_vcf(out_vcf, phased_vcf, r.cn)
-                    r.called_vcf[seq_key] = {"liftover": out_vcf}
-                    r.phased_vcf[seq_key] = {"liftover": phased_vcf}
+                    params["out_vcf"] = (
+                        f"{params['prefix']}.{r.name}.liftover.{i}_{j}.raw.vcf.gz"
+                    )
+                    params["phased_vcf"] = (
+                        f"{params['prefix']}.{r.name}.liftover.{i}_{j}.phased.vcf.gz"
+                    )
+                    r.called_vcf[seq_key] = {"liftover": params["out_vcf"]}
+                    r.phased_vcf[seq_key] = {"liftover": params["phased_vcf"]}
+                    tasks.append(params)
+        if not tasks:
+            self.logger.info(
+                "No regions with copy number > 0, skipping variant calling"
+            )
+            return
+
+        max_threads = getattr(self, "variant_call_threads", 4)  # Default to 4 threads
+        num_threads = min(max_threads, len(tasks))
+
+        self.logger.info(
+            f"Starting parallel variant calling with {num_threads} threads for {len(tasks)} tasks"
+        )
+
+        try:
+            with ThreadPoolExecutor(max_workers=num_threads) as executor:
+                # Submit region variant calling tasks
+                result_future = []
+                for task in tasks:
+                    future = executor.submit(self._call_variant, task)
+                    result_future.append(future)
+
+                # check task results
+                for future in result_future:
+                    result = future.result()
+                    if not result:
+                        raise RuntimeError("One of the variant calling tasks failed.")
+
+        except Exception as e:
+            self.logger.error(f"Parallel variant calling failed: {e}")
+            raise
+
+        self.logger.info("Completed parallel variant calling")
 
     def resolve_phased(self, params: Dict[str, Any]) -> None:
         # first merge all liftover_segdup regions into original regions
@@ -1229,8 +1292,8 @@ class Gene:
                 self.merged_regions = GeneRegion.insert(
                     self.merged_regions, region, use_orig=True
                 )
-                # matches are references to elements of self.merged_regions (linear). 
-                # this opereration may break one or more of self.merged_regions 
+                # matches are references to elements of self.merged_regions (linear).
+                # this opereration may break one or more of self.merged_regions
                 # to match the boundary of region
                 matches = GeneRegion.get_regions_by_coord(
                     self.merged_regions, region.region
@@ -1250,14 +1313,20 @@ class Gene:
                 for matched in matches:
                     matched.matched_region = []
                     for jj, mm in enumerate(all_matched):
-                        if jj == j: 
+                        if jj == j:
                             continue
                         for m in mm:
                             lifted = copy.deepcopy(m)
                             lifted.liftover(self.mapping)
-                            if lifted.region == matched.region or IntervalList(matched.region).subtract(lifted.region).size() < 20 :
+                            if (
+                                lifted.region == matched.region
+                                or IntervalList(matched.region)
+                                .subtract(lifted.region)
+                                .size()
+                                < 20
+                            ):
                                 matched.matched_region.append(m)
-                    
+
         # Now all regions are CN-distinct with full info about its CN and its matching segdup
         # For each region, resolve phased small variants
         all_vars = []
@@ -1278,7 +1347,9 @@ class Gene:
                         orig_fname = r.phased_vcf[seq_key].get("orig")
                         if orig_fname:
                             orig_vcf = vcflib.VCF(orig_fname)
-                            orig_vars = [v for v in orig_vcf if (v.chrom, v.pos) in region_itv]
+                            orig_vars = [
+                                v for v in orig_vcf if (v.chrom, v.pos) in region_itv
+                            ]
                             orig_vcf.close()
                         else:
                             orig_vars = []
@@ -1310,14 +1381,18 @@ class Gene:
                     lift_fname = r.phased_vcf[seq_key].get("liftover")
                     if lift_fname:
                         lift_vcf = vcflib.VCF(lift_fname)
-                        lift_vars = [v for v in lift_vcf if (v.chrom, v.pos) in region_itv]
+                        lift_vars = [
+                            v for v in lift_vcf if (v.chrom, v.pos) in region_itv
+                        ]
                         lift_vcf.close()
                     else:
                         lift_vars = []
                     orig_fname = r.phased_vcf[seq_key].get("orig")
                     if orig_fname:
                         orig_vcf = vcflib.VCF(orig_fname)
-                        orig_vars = [v for v in orig_vcf if (v.chrom, v.pos) in region_itv]
+                        orig_vars = [
+                            v for v in orig_vcf if (v.chrom, v.pos) in region_itv
+                        ]
                         orig_vcf.close()
                     else:
                         orig_vars = []

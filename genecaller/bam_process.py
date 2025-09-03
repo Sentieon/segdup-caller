@@ -234,9 +234,7 @@ class Bam:
             if self.cnv_model:
                 param["model"] = self.cnv_model
             param["region"] = regions.to_region_str(chrs)
-            output = os.path.join(
-                f"{self.tmpdir}/{self.sample_name}.{self.prefix}.cnv.{'.'.join(chrs)}.vcf.gz"
-            )
+            output = f"{self.prefix}.cnv.{'.'.join(chrs)}.vcf.gz"
             self.call_depth(output, param)
         segments = set()
         for chr, reg in regions.regions.items():

@@ -98,6 +98,10 @@ Targeted variant caller for genes with highly similar paralogs.
   --version                 Show program's version number and exit
 
   --keep_temp               Keep temporary files for debugging
+
+  --threads THREADS, -t THREADS
+                            Number of parallel threads for gene processing
+                            (default: number of available CPU cores)
 ```
 
 ### Examples

@@ -474,6 +474,8 @@ class GeneMapping:
                 )
                 self.reverse = e2 < s2
                 if c1 == s1 and c2 == s2:
+                    if self.reverse:
+                        s2 = e2 + 1
                     self.map12.append(Mapping(s1, s2, r1, r2))
                     self.map21.append(Mapping(s2, s1, r2, r1))
                     if combine:
@@ -632,6 +634,8 @@ class GeneMapping:
                 init_pos = pos
                 alleles = [""] * cn
                 vv = [v for i, v in to_proc if i == 0]
+                if not vv:
+                    continue
                 star = set()
                 for v in vv:
                     gt = [int(g) for g in re.split(r"\||/", v.samples[0]["GT"])]
