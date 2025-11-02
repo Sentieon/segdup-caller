@@ -1,25 +1,24 @@
 CFH:
   diff_vcf:
   - data/CFH.vcf.gz
-  - data/CFHR1.vcf.gz
   gene_names:
   - CFH
-  - CFHR1
   gene_regions:
-  - chr1:196742575-196747504
-  - chr1:196827190-196832189
-  map: data/CFH_CFHR1.dat
-CFHR3:
-  diff_vcf:
-  - data/CFHR1-3.vcf.gz
-  - data/CFHR2-4.vcf.gz
-  gene_names:
-  - CFHR1-3
-  - CFHR2-4
-  gene_regions:
-  - chr1:196786960-196824780
-  - chr1:196911484-196948803
-  map: data/CFHR1-3_CFHR2-4.dat
+  - chr1:196652043-196948803
+  cn_regions:
+   - [CFH, chr1:196742575-196747504]
+   - [CFH31, chr1:196774840-196832189]
+   - [CFHR142, chr1:196814300-196936300]
+   - [CFHR2, chr1:196936300-196948803]
+  exclusion_regions:
+   - chr1:196747505-196774840
+   - chr1:196832190-196888052
+  liftover_regions:
+  - - CFHA
+    - chr1:196786960-196789632,chr1:196789633-196809521,chr1:196812529-196817005,chr1:196817006-196824780,chr1:196742575-196747504
+  - - CFHB
+    - chr1:196911484-196914172,chr1:196914546-196934426,chr1:196934427-196938898,chr1:196941030-196948803,chr1:196827190-196832189
+  map: data/CFHA_CFHB.dat
 CYP11B1:
   diff_vcf:
   - data/CYP11B1.vcf.gz
@@ -93,17 +92,13 @@ SMN1:
   - chr5:70915943-70963993
   - chr5:70040526-70088546
   longdel: 
-  - [SMN1_6.3kdel, chr5:70948286-70954592]
   - [SMN1_3.5kdel, chr5:70917700-70921260]
   - [SMN2_6.3kdel, chr5:70072861-70079172]
-  - [SMN2_3.5kdel, chr5:70042283-70045842]
   map: data/SMN1_SMN2.dat
   config:
     longdel_priors:
-      SMN1_6.3kdel: 0.15    # Common deletion in SMA patients
-      SMN1_3.5kdel: 0.05    # Less common deletion
-      SMN2_6.3kdel: 0.10    # SMN2 deletions also occur
-      SMN2_3.5kdel: 0.03    # Least common deletion
+      SMN1_3.5kdel: 0.02    # Less common deletion
+      SMN2_6.3kdel: 0.20    # SMN2 deletions also occur
 STRC:
   diff_vcf:
   - data/STRC.vcf.gz
@@ -117,13 +112,13 @@ STRC:
   map: data/STRC_STRCP1.dat
 HBA:
   tandem: true
-  diff_vcf: 
+  diff_vcf:
   - data/HBA.vcf.gz
   gene_names:
   - HBA
   gene_regions:
   - chr16:169454-177522
-  liftover_regions: 
+  liftover_regions:
    - [HBA2, "chr16:169455-170791,chr16:175796-177521"]
    - [HBA1, "chr16:173712-175046,chr16:171990-173710"]
   cn_regions:

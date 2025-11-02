@@ -283,11 +283,35 @@ class Gene:
         else:
             self.liftover_region_names = self.gene_names
             self.liftover_target_regions = self.gene_regions
+
+        # Parse and validate exclusion regions (optional)
+        self.exclusion_regions = cfg.get("exclusion_regions", [])
+        if self.exclusion_regions:
+            # Validate: exclusions must be outside liftover regions
+            liftover_itv = IntervalList(",".join(self.liftover_target_regions))
+            exclusion_itv = IntervalList(",".join(self.exclusion_regions))
+            overlap = liftover_itv.intersect(exclusion_itv)
+            if overlap.size() > 0:
+                raise ValueError(
+                    f"Exclusion regions overlap with liftover regions at {overlap.to_region_str()}. "
+                    f"Exclusions are only allowed outside liftover_target_regions."
+                )
+
         total_dup_region = ",".join(self.liftover_target_regions)
         self.nonliftover_region = [
             IntervalList(region=g).subtract(total_dup_region).to_region_str()
             for _, g in enumerate(self.gene_regions)
         ]
+
+        # Subtract exclusion regions from nonliftover regions
+        if self.exclusion_regions:
+            exclusion_str = ",".join(self.exclusion_regions)
+            self.nonliftover_region = [
+                IntervalList(region=r).subtract(exclusion_str).to_region_str()
+                if r
+                else ""
+                for r in self.nonliftover_region
+            ]
         self.liftover_regions = [
             ",".join([g for j, g in enumerate(self.liftover_target_regions) if j != i])
             for i in range(len(self.liftover_target_regions))
@@ -615,12 +639,6 @@ class Gene:
                     self.segdup_regions[i] = GeneRegion.insert(r, region)
                 self.all_vars["cns"][region_id] = {"name": name, "cn_diff": 0}
                 region_id += 1
-        assert self.diff_vcf[0] is not None, "First diff_vcf file is None"
-        vcf_df = pd.read_csv(self.diff_vcf[0], sep="\t", comment="#")
-        self.var_density = vcf_df.shape[0] / IntervalList(self.gene_regions[0]).size()
-        for r in self.all_regions:
-            _, s, e = r.get_region()
-            r.var_factor = self.var_density * (e - s)
         # merge liftover segdup regions
         for i, regions in enumerate(self.segdup_regions):
             lo_regs = [copy.deepcopy(r) for r in regions]
@@ -1412,9 +1430,7 @@ class Gene:
         # output all variants
         out_vcf_fname = f"{params['outdir']}/{params['sample_name']}.{self.gene_names[0]}.result.vcf.gz"
         out_vcf = vcflib.VCF(out_vcf_fname, "w")
-        diff_vcf = vcflib.VCF(
-            self.merged_regions[0].phased_vcf["short_read"]["liftover"]
-        )
+        diff_vcf = vcflib.VCF(self.merged_regions[0].phased_vcf["short_read"]["orig"])
         out_vcf.copy_header(
             diff_vcf,
             update='##ALT=<ID=DEL,Description="Deletion relative to the reference">',
