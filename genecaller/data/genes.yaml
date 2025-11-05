@@ -7,7 +7,7 @@ CFH:
   - chr1:196652043-196948803
   cn_regions:
    - [CFH, chr1:196742575-196747504]
-   - [CFH31, chr1:196774840-196832189]
+   - [CFHR31, chr1:196774840-196832189]
    - [CFHR142, chr1:196814300-196936300]
    - [CFHR2, chr1:196936300-196948803]
   exclusion_regions:
@@ -19,6 +19,12 @@ CFH:
   - - CFHB
     - chr1:196911484-196914172,chr1:196914546-196934426,chr1:196934427-196938898,chr1:196941030-196948803,chr1:196827190-196832189
   map: data/CFHA_CFHB.dat
+  config:
+    cn_priors:
+      CFH: {0: 0.0005, 1: 0.0005, 2: 0.998, 3: 0.0005, 4: 0.0005}  # Very conserved
+      CFHR31: {0: 0.19, 1: 0.3, 2: 0.5, 3: 0.005, 4: 0.005}      # Het del most common, hom del next
+      CFHR142: {0: 0.02, 1: 0.08, 2: 0.89, 3: 0.005, 4: 0.005}    # Deletion less common than CFHR31
+      CFHR2: {0: 0.0005, 1: 0.0005, 2: 0.998, 3: 0.0005, 4: 0.0005}    # Very conserved
 CYP11B1:
   diff_vcf:
   - data/CYP11B1.vcf.gz

@@ -1,12 +1,13 @@
 from .util import IntervalList, GeneMapping, get_data_file
 from .logging import get_logger
+from .gene_model import create_gene_priors, GenePriors
 import copy
 from genecaller.bam_process import CopyNumberModel, Phased_vcf
 from concurrent.futures import ThreadPoolExecutor
 import heapq
 import vcflib
 import pandas as pd
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple, Any, Optional
 import scipy
 import numpy as np
 
@@ -261,8 +262,9 @@ class GeneRegion:
 class Gene:
     high_mq_regions = {}
     cn_prior_std = 2
-    _log_priors = {}  # Pre-calculated log priors for CN values 0-8
+    _log_priors = {}  # DEPRECATED: kept for backward compatibility
     _longdel_log_priors = {}  # Pre-calculated log priors for long deletions
+    _priors: Optional[GenePriors] = None  # GenePriors instance for CN prior calculation
 
     def __init__(self, cfg: dict) -> None:
         self.config = cfg.get("config", {})
@@ -324,178 +326,13 @@ class Gene:
         self.chr = cfg["gene_regions"][0].split(",")[0].split(":")[0]
         self.variant_call_threads = 4  # Default to 4 threads for vara
         self.logger = get_logger(self.__class__.__name__)
-        self._initialize_log_priors()
+        self._initialize_priors()
         self._initialize_longdel_priors(cfg)
 
-    def _initialize_log_priors(self) -> None:
-        """Pre-calculate log priors for CN values 0-8"""
-        # Determine prior type with priority: categorical > gamma > gaussian
-        prior_type = self.config.get("prior_type", "gaussian")
-
-        # Override prior_type if categorical priors are present
-        if "cn_priors" in self.config:
-            prior_type = "categorical"
-
-        if prior_type == "categorical":
-            self._init_categorical_priors()
-        elif prior_type == "gamma":
-            self._init_gamma_priors()
-        else:
-            self._init_gaussian_priors()
-
-    def _init_categorical_priors(self) -> None:
-        """Initialize categorical (discrete) priors"""
-        import numpy as np
-
-        priors = self.config["cn_priors"]
-
-        # Validate that probabilities sum to 1
-        total_prob = sum(priors.values())
-        if not np.isclose(total_prob, 1.0, rtol=1e-6):
-            self.logger.warning(
-                f"CN priors sum to {total_prob:.6f}, not 1.0. Normalizing..."
-            )
-            # Normalize probabilities
-            for cn in priors:
-                priors[cn] /= total_prob
-
-        # Calculate log probabilities
-        for cn, prob in priors.items():
-            if prob <= 0:
-                self.logger.warning(
-                    f"CN prior for CN={cn} is {prob} <= 0. Setting to very small value."
-                )
-                self._log_priors[cn] = -1e9  # Very small log probability
-            else:
-                self._log_priors[cn] = np.log(prob)
-
-        self.logger.debug(f"Using categorical CN priors: {priors}")
-
-    def _init_gamma_priors(self) -> None:
-        """Initialize discrete gamma-like distribution priors"""
-
-        # Get gamma parameters with defaults for mean=2
-        gamma_shape = self.config.get("gamma_shape", 4.0)  # α parameter
-        gamma_scale = self.config.get("gamma_scale", 0.5)  # β parameter
-
-        # Validate parameters
-        if gamma_shape <= 0 or gamma_scale <= 0:
-            self.logger.warning(
-                f"Invalid gamma parameters: shape={gamma_shape}, scale={gamma_scale}. Using Gaussian fallback."
-            )
-            self._init_gaussian_priors()
-            return
-
-        # Use negative binomial distribution as discrete analog to gamma
-        # Negative binomial is the discrete analog of gamma distribution
-        # For negative binomial: mean = r*p/(1-p), var = r*p/(1-p)^2
-        # We want mean ≈ gamma_shape * gamma_scale
-
-        target_mean = gamma_shape * gamma_scale
-        target_var = gamma_shape * gamma_scale**2
-
-        # Convert to negative binomial parameters
-        # scipy.stats.nbinom uses parameterization: nbinom(n, p)
-        # where n = number of successes, p = probability of success
-        # Mean = n(1-p)/p, Variance = n(1-p)/p²
-        #
-        # Given target_mean (μ) and target_var (σ²):
-        # μ = n(1-p)/p  →  n = μp/(1-p)
-        # σ² = n(1-p)/p²  →  σ² = μ(1-p)/p
-        #
-        # Solving for p: p = μ/σ²
-        # Solving for n: n = μ²/(σ²-μ)
-
-        if target_var <= target_mean:
-            # Variance too small for negative binomial, fall back to Poisson
-            self.logger.warning(
-                f"Gamma variance {target_var:.3f} <= mean {target_mean:.3f}. Using Poisson approximation."
-            )
-            # Use Poisson distribution
-            cn_probs = []
-            for cn in range(9):
-                prob = scipy.stats.poisson.pmf(cn, mu=target_mean)
-                cn_probs.append(prob)
-        else:
-            # Use negative binomial with scipy parameterization
-            p = target_mean / target_var
-            n = (target_mean**2) / (target_var - target_mean)
-
-            # Validate parameters
-            if not (0 < p <= 1 and n > 0):
-                self.logger.warning(
-                    f"Invalid negative binomial parameters: n={n:.3f}, p={p:.3f}. Using Poisson fallback."
-                )
-                cn_probs = []
-                for cn in range(9):
-                    prob = scipy.stats.poisson.pmf(cn, mu=target_mean)
-                    cn_probs.append(prob)
-            else:
-                # Calculate probabilities for CN 0-8
-                cn_probs = []
-                for cn in range(9):
-                    prob = scipy.stats.nbinom.pmf(cn, n=n, p=p)
-                    cn_probs.append(prob)
-
-        # Normalize probabilities to sum to 1 over our range
-        total_prob = sum(cn_probs)
-        cn_probs = [p / total_prob for p in cn_probs]
-
-        # Store log probabilities
-        for cn in range(9):
-            if cn_probs[cn] <= 0:
-                self._log_priors[cn] = -1e9
-            else:
-                self._log_priors[cn] = np.log(cn_probs[cn])
-
-        actual_mean = sum(cn * cn_probs[cn] for cn in range(9))
-        actual_var = sum(cn**2 * cn_probs[cn] for cn in range(9)) - actual_mean**2
-
-        self.logger.debug(
-            f"Using discrete gamma-like CN prior: target_mean={target_mean:.2f}, actual_mean={actual_mean:.2f}, actual_var={actual_var:.2f}"
-        )
-
-    def _init_gaussian_priors(self) -> None:
-        """Initialize discretized Gaussian (normal) distribution priors"""
-
-        # Calculate probabilities by integrating normal distribution over unit intervals
-        # P(CN=k) = ∫[k-0.5 to k+0.5] N(μ=2, σ=cn_prior_std) dx
-        # This is equivalent to: P(CN=k) = Φ(k+0.5) - Φ(k-0.5)
-        # where Φ is the cumulative distribution function
-
-        cn_probs = []
-        for cn in range(9):  # 0 to 8
-            if cn == 0:
-                # P(CN=0) = Φ(0.5) - Φ(-∞) = Φ(0.5)
-                upper = scipy.stats.norm.cdf(0.5, loc=2, scale=self.cn_prior_std)
-                prob = upper
-            elif cn == 8:
-                # P(CN=8) = Φ(∞) - Φ(7.5) = 1 - Φ(7.5)
-                lower = scipy.stats.norm.cdf(7.5, loc=2, scale=self.cn_prior_std)
-                prob = 1.0 - lower
-            else:
-                # P(CN=k) = Φ(k+0.5) - Φ(k-0.5)
-                upper = scipy.stats.norm.cdf(cn + 0.5, loc=2, scale=self.cn_prior_std)
-                lower = scipy.stats.norm.cdf(cn - 0.5, loc=2, scale=self.cn_prior_std)
-                prob = upper - lower
-
-            cn_probs.append(max(float(prob), 1e-10))  # Avoid zero probabilities
-
-        # Normalize probabilities to sum to 1 over our range
-        total_prob = sum(cn_probs)
-        cn_probs = [p / total_prob for p in cn_probs]
-
-        # Store log probabilities
-        for cn in range(9):
-            self._log_priors[cn] = np.log(cn_probs[cn])
-
-        # Calculate actual mean and variance for validation
-        actual_mean = sum(cn * cn_probs[cn] for cn in range(9))
-        actual_var = sum(cn**2 * cn_probs[cn] for cn in range(9)) - actual_mean**2
-
-        self.logger.debug(
-            f"Using discretized Gaussian CN prior: N(2, {self.cn_prior_std}) -> actual_mean={actual_mean:.2f}, actual_var={actual_var:.2f}"
-        )
+    def _initialize_priors(self) -> None:
+        """Initialize CN prior model using factory pattern."""
+        # Create GenePriors instance using factory
+        self._priors = create_gene_priors(self.config, self.all_vars["cns"])
 
     def _initialize_longdel_priors(self, cfg: dict) -> None:
         """Pre-calculate log priors for long deletions"""
@@ -1017,6 +854,32 @@ class Gene:
                 i += 1
         return cn_diff
 
+    def get_prior_by_region_id(self, region_id: int) -> float:
+        prior = 0.0
+        if region_id == 0:
+            if 0 in self.all_vars["cns"]:
+                region_name = self.all_vars["cns"][0]["name"]
+                cn_diff = self.all_vars["cns"][0]["cn_diff"]
+                cn = cn_diff + 2
+                prior = (
+                    self._priors.get_log_prior(cn, region_name) if self._priors else 0.0
+                )
+        else:
+            i = 0
+            while (1 << i) <= region_id:
+                # Check if the bit at the current position is 'on' (i.e., 1)
+                if (region_id >> i) & 1 and i in self.all_vars["cns"]:
+                    region_name = self.all_vars["cns"][i]["name"]
+                    cn_diff = self.all_vars["cns"][i]["cn_diff"]
+                    cn = cn_diff + 2
+                    prior += (
+                        self._priors.get_log_prior(cn, region_name)
+                        if self._priors
+                        else 0.0
+                    )
+                i += 1
+        return prior
+
     def get_cn_diff_by_longdel_id(self, longdel_id: int) -> int:
         cn_diff = 0
         if longdel_id > 0:  # is a deletion
@@ -1053,23 +916,8 @@ class Gene:
             cn = cn_diff + 2
 
             # Calculate CN prior (for the final copy number)
-            if cn in self._log_priors:
-                cn_log_prior = self._log_priors[cn]
-            else:
-                # Fallback for CN values outside pre-calculated range
-                # Use discretized gaussian approach
-                if cn <= 0:
-                    upper = scipy.stats.norm.cdf(0.5, loc=2, scale=self.cn_prior_std)
-                    prob = upper
-                else:
-                    upper = scipy.stats.norm.cdf(
-                        cn + 0.5, loc=2, scale=self.cn_prior_std
-                    )
-                    lower = scipy.stats.norm.cdf(
-                        cn - 0.5, loc=2, scale=self.cn_prior_std
-                    )
-                    prob = upper - lower
-                cn_log_prior = np.log(max(float(prob), 1e-10))
+            # Use region-specific priors if available (via region name)
+            cn_log_prior = self.get_prior_by_region_id(r.region_id)
 
             # Calculate longdel priors for deletions affecting this region
             longdel_log_prior = 0.0
@@ -1115,27 +963,9 @@ class Gene:
                     diff = diffs[j]
                     # CN prior
                     cn = diff + 2
-                    if cn in self._log_priors:
-                        cn_prior = self._log_priors[cn]
-                    else:
-                        # Fallback for CN values outside pre-calculated range
-
-                        if cn <= 0:
-                            upper = scipy.stats.norm.cdf(
-                                0.5, loc=2, scale=self.cn_prior_std
-                            )
-                            prob = upper
-                        else:
-                            upper = scipy.stats.norm.cdf(
-                                cn + 0.5, loc=2, scale=self.cn_prior_std
-                            )
-                            lower = scipy.stats.norm.cdf(
-                                cn - 0.5, loc=2, scale=self.cn_prior_std
-                            )
-                            prob = upper - lower
-                        cn_prior = np.log(max(float(prob), 1e-10))
-                    cn_log_priors.append(cn_prior)
-
+                    cn_log_priors.append(
+                        self.get_prior_by_region_id(r.orig_region_id[j])
+                    )
                     # Longdel priors for this paralogous region
                     longdel_prior = 0.0
                     longdel_id = r.orig_longdel_id[j]

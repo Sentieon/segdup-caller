@@ -462,22 +462,33 @@ class Bam:
                     contig_names.append(line[1:].strip())
         return contig_names
 
-    # convert 0-based to 1-based regions
     @staticmethod
-    def to_region(positions: Dict[str, Dict[int, int]], min_gap: int = 1) -> List[str]:
+    def to_region(
+        positions: Dict[str, Dict[int, int]], min_gap: int = 1, min_size: int = 10
+    ) -> List[str]:
         regions = []
+        start = 0
         for chr, pos in positions.items():
             last_pos = -1
             last_region = None
             sorted_pos = sorted(pos.keys())
             for p in sorted_pos:
-                if p > last_pos + min_gap:
-                    if last_region:
-                        last_region += str(last_pos + 1)
-                        regions.append(last_region)
-                    last_region = f"{chr}:{p + 1}-"
+                if last_pos == -1:
+                    last_region = f"{chr}:{p}-"
+                    start = p
+                    last_pos = p
+                    continue
+                if (
+                    last_region
+                    and p > last_pos + min_gap
+                    and last_pos - start + 1 >= min_size
+                ):
+                    last_region += str(last_pos + 1)
+                    regions.append(last_region)
+                    last_region = f"{chr}:{p}-"
+                    start = p
                 last_pos = p
-            if last_pos and last_region:
+            if last_pos != -1 and last_region and last_pos - start + 1 >= min_size:
                 last_region += str(last_pos + 1)
                 regions.append(last_region)
         return regions
@@ -642,7 +653,7 @@ class Bam:
         for region in self.to_region(ref_positions, 10):
             chr, positions = region.split(":")
             start, end = [int(s) for s in positions.split("-")]
-            failed_region.append(f"{chr}:{mapping[start]}-{mapping[end - 1] + 1}")
+            failed_region.append(f"{chr}:{mapping[start] + 1}-{mapping[end - 1] + 2}")
         failed_region = ",".join(failed_region)
         return {"lifted_bam": out_bam, "failed_region": failed_region}
 
