@@ -43,6 +43,7 @@ venv.bak/
 .coverage
 .tox/
 htmlcov/
+test/
 
 # Project specific
 *.bam
