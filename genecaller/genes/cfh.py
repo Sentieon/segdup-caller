@@ -17,7 +17,7 @@ class CFH(Gene):
         region_info = {}
         for region_data in self.all_vars["cns"].values():
             region_name = region_data["name"]
-            coords = region_data["region"]
+            coords = self.cn_regions[region_name]
 
             # Parse coordinates to calculate size
             _, positions = coords.split(":")
@@ -65,7 +65,9 @@ class CFH(Gene):
             interpretation_lines.append("")
             interpretation_lines.append(f"CNV events detected: {len(cnv_events)}")
             total_size_kb = sum(size for _, _, _, size in cnv_events)
-            interpretation_lines.append(f"Total affected region: {total_size_kb:.1f} kb")
+            interpretation_lines.append(
+                f"Total affected region: {total_size_kb:.1f} kb"
+            )
 
         result_data["cn_interpretation"] = "\n".join(interpretation_lines)
 

@@ -17,7 +17,7 @@ class HBA(Gene):
         region_info = {}
         for region_data in self.all_vars["cns"].values():
             region_name = region_data["name"]
-            coords = region_data["region"]
+            coords = self.cn_regions[region_name]
 
             _, positions = coords.split(":")
             start, end = map(int, positions.split("-"))
@@ -29,7 +29,7 @@ class HBA(Gene):
         region_display_names = {
             "a3.7": "-α3.7",
             "a4.2": "-α4.2",
-            "non-duplication": "non-duplication"
+            "non-duplication": "non-duplication",
         }
 
         cn_a37 = copy_numbers.get("a3.7", 2)
@@ -57,7 +57,9 @@ class HBA(Gene):
                     f"{display_name}: {event_type} (CN=1, {coords})"
                 )
             elif cn == 2:
-                interpretation_lines.append(f"{display_name}: Normal copy number (CN=2)")
+                interpretation_lines.append(
+                    f"{display_name}: Normal copy number (CN=2)"
+                )
             elif cn == 3:
                 event_type = "Triplication"
                 cnv_events.append((region_name, event_type, coords))
@@ -73,14 +75,20 @@ class HBA(Gene):
 
         # Add clinical interpretation based on CN pattern
         interpretation_lines.append("")
-        clinical_interpretation = self._get_clinical_interpretation(cn_a37, cn_a42, cn_nondup)
-        interpretation_lines.append(f"Clinical interpretation: {clinical_interpretation}")
+        clinical_interpretation = self._get_clinical_interpretation(
+            cn_a37, cn_a42, cn_nondup
+        )
+        interpretation_lines.append(
+            f"Clinical interpretation: {clinical_interpretation}"
+        )
 
         result_data["cn_interpretation"] = "\n".join(interpretation_lines)
 
         return result_data
 
-    def _get_clinical_interpretation(self, cn_a37: int, cn_a42: int, cn_nondup: int) -> str:
+    def _get_clinical_interpretation(
+        self, cn_a37: int, cn_a42: int, cn_nondup: int
+    ) -> str:
         """
         Determine clinical interpretation based on copy number pattern.
 

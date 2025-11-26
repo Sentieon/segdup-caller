@@ -766,6 +766,8 @@ class Bam:
             if ref_pos != pos:
                 continue
             seq = [s.upper() for s in pileupcol.get_query_sequences(add_indels=True)]
+            if len(seq) == 0:
+                continue
             mqs = pileupcol.get_mapping_qualities()
             mq = sum(mqs) / len(mqs)
             pileuprec = PileUpRecord(pos, mq, Counter(seq))
