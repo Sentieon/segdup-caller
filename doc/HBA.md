@@ -65,7 +65,7 @@ The Sentieon Segdup Caller performs a comprehensive three-phase analysis of the 
 ### Phase 2: Copy Number Determination
 
 1. Calculates normalized read depth across the three HBA regions (with depth normalization factor of 1.12)
-2. Analyzes deletion-specific regions:
+2. Analyzes specific regions:
    - **-α3.7 region**: Detects 3.7 kb rightward deletions
    - **-α4.2 region**: Detects 4.2 kb leftward deletions
    - **Non-duplication region**: Validates overall gene cluster integrity and detects large deletions (--SEA, --MED, --FIL, --THAI) that remove the entire alpha-globin cluster
