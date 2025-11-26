@@ -525,54 +525,57 @@ class Gene:
                 self.conversion_db
             )
 
-        result_data["gene_conversions"] = []
-        for seg in self.converted_segments:
-            is_fusion = getattr(seg, "is_fusion_candidate", False)
-            conversion_data = {
-                "region": f"{self.chr}:{seg.start}-{seg.end}",
-                "converted_alleles": int(seg.conversion_allele_count),
-                "is_fusion_candidate": bool(is_fusion),
-            }
-            if is_fusion:
-                fusion_type = getattr(seg, "fusion_type", None)
-                if fusion_type:
-                    conversion_data["fusion_type"] = fusion_type
-            else:
-                conversion_data["conversion_sites"] = [
-                    s.id for s in seg.signals if s.is_conversion_site()
-                ]
-
-            # Match against known conversions if available
-            if known_conversions:
-                matches = GeneConversionDetector.match_known_conversion(
-                    seg, known_conversions, self.gene_names, match_threshold=0.8
-                )
-                if matches:
-                    if not is_fusion:
-                        conversion_data["interpretation"] = [
-                            {
-                                "event_name": event_name,
-                                "match_score": score,
-                                "matched_variants": list(matched_ids),
-                            }
-                            for event_name, score, matched_ids in matches
-                        ]
-                    else:
-                        conversion_data["interpretation"] = [
-                            {
-                                "event_name": event_name,
-                            }
-                            for event_name, _, _ in matches
-                        ]
+        if self.conversion_regions:
+            result_data["gene_conversions"] = []
+            for seg in self.converted_segments:
+                is_fusion = getattr(seg, "is_fusion_candidate", False)
+                conversion_data = {
+                    "region": f"{self.chr}:{seg.start}-{seg.end}",
+                    "converted_alleles": int(seg.conversion_allele_count),
+                    "is_fusion_candidate": bool(is_fusion),
+                }
+                if is_fusion:
+                    fusion_type = getattr(seg, "fusion_type", None)
+                    if fusion_type:
+                        conversion_data["fusion_type"] = fusion_type
                 else:
-                    event_type = "fusion" if is_fusion else "conversion"
-                    # conversion_data["interpretation"] = (
-                    #     f"Novel {event_type} (no known match)"
-                    # )
-            else:
-                conversion_data["interpretation"] = "No conversion database configured"
+                    conversion_data["conversion_sites"] = [
+                        s.id for s in seg.signals if s.is_conversion_site()
+                    ]
 
-            result_data["gene_conversions"].append(conversion_data)
+                # Match against known conversions if available
+                if known_conversions:
+                    matches = GeneConversionDetector.match_known_conversion(
+                        seg, known_conversions, self.gene_names, match_threshold=0.8
+                    )
+                    if matches:
+                        if not is_fusion:
+                            conversion_data["interpretation"] = [
+                                {
+                                    "event_name": event_name,
+                                    "match_score": score,
+                                    "matched_variants": list(matched_ids),
+                                }
+                                for event_name, score, matched_ids in matches
+                            ]
+                        else:
+                            conversion_data["interpretation"] = [
+                                {
+                                    "event_name": event_name,
+                                }
+                                for event_name, _, _ in matches
+                            ]
+                    else:
+                        event_type = "fusion" if is_fusion else "conversion"
+                        # conversion_data["interpretation"] = (
+                        #     f"Novel {event_type} (no known match)"
+                        # )
+                else:
+                    conversion_data["interpretation"] = (
+                        "No conversion database configured"
+                    )
+
+                result_data["gene_conversions"].append(conversion_data)
 
         return result_data
 
