@@ -13,18 +13,7 @@ class HBA(Gene):
         interpretation_lines = []
         copy_numbers = result_data["Copy numbers"]
 
-        # Build region_info from all_vars["cns"] which contains cn_regions from config
-        region_info = {}
-        for region_data in self.all_vars["cns"].values():
-            region_name = region_data["name"]
-            coords = self.cn_regions[region_name]
-
-            _, positions = coords.split(":")
-            start, end = map(int, positions.split("-"))
-            size_bp = end - start
-
-            region_info[region_name] = (coords, size_bp)
-
+        region_info = {r[0]: r[1] for r in self.cn_regions}
         # Get copy numbers (use standard naming with Greek alpha)
         region_display_names = {
             "a3.7": "-α3.7",
@@ -40,10 +29,9 @@ class HBA(Gene):
         cnv_events = []
 
         # Report individual region copy numbers
-        for region_name, (coords, size_bp) in region_info.items():
-            cn = copy_numbers.get(region_name, 2)
+        for region_name, cn in copy_numbers.items():
             display_name = region_display_names.get(region_name, region_name)
-
+            coords = region_info.get(region_name, "Non-duplication region")
             if cn == 0:
                 event_type = "Homozygous deletion"
                 cnv_events.append((region_name, event_type, coords))
@@ -74,7 +62,6 @@ class HBA(Gene):
                 )
 
         # Add clinical interpretation based on CN pattern
-        interpretation_lines.append("")
         clinical_interpretation = self._get_clinical_interpretation(
             cn_a37, cn_a42, cn_nondup
         )
