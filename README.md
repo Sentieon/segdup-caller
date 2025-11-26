@@ -4,7 +4,17 @@
 
 Segdup caller currently supports whole-genome sequencing (WGS) paired-end short reads of 150 bp length, such as those from Illumina, Element Biosciences, MGI, and others. Sentieon provides platform-specific short-read variant calling models. For accurate copy number calling and phasing, Segdup caller recommends a minimum of 20× coverage, with 30× being ideal.
 
-Segdup caller supports additional long-read data from **PacBio HiFi** or **Oxford Nanopore**, aligned BAM files, using the corresponding Sentieon models. 
+Segdup caller supports additional long-read data from **PacBio HiFi** or **Oxford Nanopore**, aligned BAM files, using the corresponding Sentieon models.
+
+---
+
+## Key Features
+
+- **Copy Number Determination**: Statistical modeling to determine copy number states for each gene region using maximum likelihood optimization
+- **Accurate Variant Calling in Complex Regions**: Specialized algorithms for genes with highly similar paralogs and pseudogenes
+- **Haplotype Phasing**: Integrates whatshap for accurate phasing and assignment of variants to specific gene copies
+- **Gene conversion detection**: Detects gene conversion and fusion detection for select genes
+- **Star allele calling**: Call star alleles for CYP2D6
 
 ### Supported Genes
 
@@ -55,10 +65,10 @@ You can find a list of Sentieon models in our [Sentieon models repository](https
 
 ```bash
 usage: segdup-caller [-h] --short SHORT [--long LONG] --sr_model SR_MODEL
-                     [--lr_model LR_MODEL] --reference REFERENCE --genes GENES
+                     [--lr_model LR_MODEL] --reference REFERENCE [--genes GENES]
                      [--sample_name SAMPLE_NAME] [--sr_prefix SR_PREFIX]
                      [--lr_prefix LR_PREFIX] [--config CONFIG] --outdir OUTDIR
-                     [--version] [--keep_temp]
+                     [--threads THREADS] [--version] [--keep_temp]
 ```
 
 Targeted variant caller for genes with highly similar paralogs.
@@ -77,31 +87,32 @@ Targeted variant caller for genes with highly similar paralogs.
   --lr_model LR_MODEL       Long read model bundle (required if --long is provided)
 
   --reference REFERENCE, -r REFERENCE
-                            Reference file
+                            Reference file (required)
 
   --genes GENES, -g GENES   List of genes to be called (comma separated).
+                            If not specified, all supported genes will be called.
                             Supported genes: CFH, CFHR3, CYP11B1, CYP2D6, GBA,
                             NCF1, PMS2, SMN1, STRC, HBA
 
   --sample_name SAMPLE_NAME Sample name (default: SM tag in the input short-read
                             BAM file will be used)
 
-  --sr_prefix SR_PREFIX     Short read result prefix
+  --sr_prefix SR_PREFIX     Short read result prefix (default: sr)
 
-  --lr_prefix LR_PREFIX     Long read result prefix
+  --lr_prefix LR_PREFIX     Long read result prefix (default: lr)
 
   --config CONFIG           Custom gene configuration file (advanced users only)
 
   --outdir OUTDIR, -o OUTDIR
-                            Output directory
-
-  --version                 Show program's version number and exit
-
-  --keep_temp               Keep temporary files for debugging
+                            Output directory (required)
 
   --threads THREADS, -t THREADS
                             Number of parallel threads for gene processing
                             (default: number of available CPU cores)
+
+  --version                 Show program's version number and exit
+
+  --keep_temp               Keep temporary files for debugging
 ```
 
 ### Examples
@@ -111,9 +122,14 @@ Targeted variant caller for genes with highly similar paralogs.
 segdup-caller --version
 ```
 
-**Calling SMN1/SMN2 with a short-read input BAM:**
+**Calling all genes with a short-read input BAM:**
 ```bash
-segdup-caller -s $short_read_bam -r $hg38_REF --sr_model $short_read_model_bundle -g SMN1 -o $outdir 
+segdup-caller -s $short_read_bam -r $hg38_REF --sr_model $short_read_model_bundle -o $outdir 
+```
+
+**Calling SMN1/SMN2 and CYP2D6 with a short-read input BAM:**
+```bash
+segdup-caller -s $short_read_bam -r $hg38_REF --sr_model $short_read_model_bundle -g SMN1,CYP2D6 -o $outdir 
 ```
 
 ---
@@ -122,6 +138,6 @@ segdup-caller -s $short_read_bam -r $hg38_REF --sr_model $short_read_model_bundl
 
 Sentieon Segdup caller produces the following output:
 
+- A YAML file containing information of analysis result, including copy number states, gene conversion events if detected, etc. 
 - VCF files containing variant calls for each specified gene region
-- A YAML file containing additional information, such as copy number states
 
