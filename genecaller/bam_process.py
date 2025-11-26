@@ -19,6 +19,7 @@ from typing import List, Dict, Tuple, Optional, Any, Union, Callable
 
 Segment = namedtuple("Segment", "chrom, start, end, cnt, mq, mean, std, mean0, std0")
 DepthSegment = namedtuple("DepthSegment", "chrom, start, end, mq, mean, mean0")
+PileUpRecord = namedtuple("PileUpRecord", "pos, MQ, AD")
 
 
 class Bam:
@@ -41,6 +42,7 @@ class Bam:
         self.outdir = None
         self.tmpdir = param["tmpdir"]
         self.dp_norm = 1.0
+        self.pileup_records = {}
         if "tools" not in param:
             raise Exception("External tools are not set up")
         for k, v in param["tools"].items():
@@ -106,7 +108,7 @@ class Bam:
             apply_model = param["model"]
         if "region" in param:
             driver_opt += f" --interval {param['region']}"
-        elif "dbsnp" in param:
+        if "dbsnp" in param:
             algo_opt += f" -d {param['dbsnp']}"
         if apply_model:
             tmp_output = output.replace("vcf", "tmp.vcf")
@@ -136,7 +138,7 @@ class Bam:
             algo_opt += f" --ploidy {param['ploidy']}"
         if "given" in param:
             algo_opt += f" --given {param['given']} -d {param['given']}"
-        elif "dbsnp" in param:
+        if "dbsnp" in param:
             algo_opt += f" -d {param['dbsnp']}"
         cmd = (
             f"{self.sentieon} driver {driver_opt} --algo Genotyper {algo_opt} {output}"
@@ -752,6 +754,26 @@ class Bam:
         )
         return scaled_total_log_prob
 
+    def get_pileup(self, chr, pos):
+        if (chr, pos) in self.pileup_records:
+            return self.pileup_records[(chr, pos)]
+        if self.bamh is None:
+            self.init_bamh()
+        pileuprec = None
+        region = f"{chr}:{pos + 1}-{pos + 1}"
+        for pileupcol in self._pileup_safe(self.bamh, region=region, truncate=True):  # type: ignore
+            ref_pos = pileupcol.reference_pos
+            if ref_pos != pos:
+                continue
+            seq = [s.upper() for s in pileupcol.get_query_sequences(add_indels=True)]
+            mqs = pileupcol.get_mapping_qualities()
+            mq = sum(mqs) / len(mqs)
+            pileuprec = PileUpRecord(pos, mq, Counter(seq))
+            break
+        if pileuprec:
+            self.pileup_records[(chr, pos)] = pileuprec
+        return pileuprec
+
 
 class CopyNumberModel:
     cn_priors = {
@@ -765,7 +787,6 @@ class CopyNumberModel:
         "default": 1e-4,
     }
     error_rate = 0.01
-    PileUpRecord = namedtuple("PileUpRecord", "pos, MQ, AD")
 
     def __init__(
         self, read_data: Dict[str, Any], gene: Any, param: Dict[str, Any]
@@ -816,7 +837,6 @@ class CopyNumberModel:
             reg = IntervalList(region=reg)
         vcf = vcflib.VCF(given)
         cnts = {}
-        bamh = bam.init_bamh()
         for v in vcf:
             if (
                 reg.get(v.chrom, v.pos, v.end)
@@ -824,43 +844,24 @@ class CopyNumberModel:
                 and len(v.alt) == 1
                 and len(v.alt[0]) == 1
             ):
-                region = f"{v.chrom}:{v.pos + 1}-{v.pos + 1}"
-                for pileupcol in bam._pileup_safe(bamh, region=region, truncate=True):
-                    pos = pileupcol.reference_pos
-                    if pos != v.pos:
+                pileuprec = bam.get_pileup(v.chrom, v.pos)
+                if pileuprec is None:
+                    continue
+                c = pileuprec.AD
+                ref_cnt = c.get(v.ref, 0)
+                alt_cnt = sum(c.values()) - ref_cnt
+                if filter_fn:
+                    if not filter_fn(pileuprec):
                         continue
-                    seq = [
-                        s.upper()
-                        for s in pileupcol.get_query_sequences(add_indels=True)
-                    ]
-                    c = Counter(seq)
-                    ref_cnt = c[v.ref]
-                    alt_cnt = len(seq) - ref_cnt
-                    if filter_fn:
-                        mqs = pileupcol.get_mapping_qualities()
-                        mq = sum(mqs) / len(mqs)
-                        if not filter_fn(
-                            CopyNumberModel.PileUpRecord(v.pos, mq, (ref_cnt, alt_cnt))
-                        ):
-                            continue
-                    cnts[v.pos] = [ref_cnt, alt_cnt]
-                if alt and v.pos in cnts:
+                cnts[v.pos] = [ref_cnt, alt_cnt]
+                if alt:
                     cnts[v.pos] += [0, 0]
                     pos2 = self.gene.mapping.get(v.pos)
-                    region = f"{v.chrom}:{pos2 + 1}-{pos2 + 1}"
-                    for pileupcol in bam._pileup_safe(
-                        bamh, region=region, truncate=True
-                    ):
-                        pos = pileupcol.reference_pos
-                        if pos != pos2:
-                            continue
-                        seq = [
-                            s.upper()
-                            for s in pileupcol.get_query_sequences(add_indels=True)
-                        ]
-                        c = Counter(seq)
+                    pileuprec = bam.get_pileup(v.chrom, pos2)
+                    if pileuprec:
+                        c = pileuprec.AD
                         ref_cnt2 = c[v.alt[0]]
-                        alt_cnt2 = len(seq) - ref_cnt2
+                        alt_cnt2 = sum(c.values()) - ref_cnt2
                         cnts[v.pos][2:] = [ref_cnt2, alt_cnt2]
         vcf.close()
         return cnts
@@ -1030,77 +1031,54 @@ class Phased_vcf:
         matched: Dict[int, Any],
         gene_id: int,
     ) -> Tuple[List[Any], List[Any]]:
-        def _proc_homvar():
+        def _proc_as_is():
             for v in phased:
                 v1 = self.split_homvar(v, cns)
                 if v1:
-                    v1s.append(v1)
+                    heapq.heappush(v1s, (v1.pos, v1))
+            output_v1s = []
+            last_pos = None
+            while v1s:
+                pos, v1 = heapq.heappop(v1s)
+                if pos == last_pos:
+                    continue
+                last_pos = pos
+                output_v1s.append(v1)
+            return phased, output_v1s
 
         v1s = []
-        all_alleles = []
+        all_alleles = {}
         for v in phased:
-            assert sum(cns) == len(re.split(r"\||/", v.samples[0]["GT"]))
+            gt = list(map(int, re.split(r"\||/", v.samples[0]["GT"])))
+            assert sum(cns) == len(gt)
             if v.id != ".":
-                all_alleles.append(
-                    "_".join(
-                        [
-                            str(i)
-                            for i, g in enumerate(v.samples[0]["GT"].split("|"))
-                            if g == "1"
-                        ]
-                    )
-                )
+                for i, g in enumerate(gt):
+                    if g == 1:
+                        all_alleles[i] = all_alleles.get(i, 0) + 1
             elif v.pos in matched:
-                m = matched[v.pos]
-                if m[0]:
-                    all_alleles.append(
-                        "_".join(
-                            [
-                                str(i)
-                                for i, g in enumerate(v.samples[0]["GT"].split("|"))
-                                if g == "0"
-                            ]
-                        )
-                    )
-                elif m[1]:
-                    all_alleles.append(
-                        "_".join(
-                            [
-                                str(i)
-                                for i, g in enumerate(v.samples[0]["GT"].split("|"))
-                                if g == "1"
-                            ]
-                        )
-                    )
-
+                v1, _, vs = matched[v.pos]
+                gt = list(map(int, re.split(r"\||/", vs.samples[0]["GT"])))
+                for i, g in enumerate(gt):
+                    if g == 1:
+                        all_alleles[i] = all_alleles.get(i, 0) + 1
         if not all_alleles:
-            _proc_homvar()
-            return phased, v1s
+            return _proc_as_is()
         # get most common choice
         # if there is any alleles inconsistent with CN
         allele_cnts = Counter(all_alleles)
-        wrong_alleles = [a for a in set(all_alleles) if len(a.split("_")) != cns[1]]
-        if not wrong_alleles:
-            gene2_alleles = allele_cnts.most_common()[0]
-        else:
-            correct_alleles = [a for a in all_alleles if a not in wrong_alleles]
-            if not correct_alleles:
-                _proc_homvar()
-                return phased, v1s
-            correct_allele_cnts = Counter(correct_alleles)
-            allele, cnt = correct_allele_cnts.most_common()[0]
-            sallele = set(allele.split("_"))
-            # check alleles with wrong count to see if it is consistent with the most commonly allele with correct CN
-            for a in wrong_alleles:
-                sa = a.split("_")
-                if sallele.intersection(sa) == set(sa):  # is a subset
-                    cnt += allele_cnts[a]
-            gene2_alleles = [allele, cnt]
-        # no consensus alleles
-        if gene2_alleles[1] < (1 - self.max_mismatch) * len(all_alleles):
-            _proc_homvar()
-            return phased, v1s
-        gene2_alleles = [int(i) for i in gene2_alleles[0].split("_")]
+        if len(all_alleles) > cns[1]:
+            missed_cnts = sum(c for _, c in allele_cnts.most_common()[cns[1] :])
+            total_cnts = sum(all_alleles.values())
+            if missed_cnts / total_cnts > self.max_mismatch:
+                return _proc_as_is()
+        # take the most common alleles
+        gene2_alleles = [k for k, _ in allele_cnts.most_common(cns[1])]
+        if len(gene2_alleles) < cns[1]:
+            for i in range(sum(cns)):
+                if i not in gene2_alleles:
+                    gene2_alleles.append(i)
+                if len(gene2_alleles) == cns[1]:
+                    break
         gene1_alleles = [i for i in range(sum(cns)) if i not in gene2_alleles]
         for v in phased:
             label = []
@@ -1119,53 +1097,63 @@ class Phased_vcf:
                     ["1" if a in alt_alleles else "0" for a in gene1_alleles]
                 )
                 self._annotate(v1)
-                v1s.append(v1)
+                heapq.heappush(v1s, (v1.pos, v1))
             v.info["LABEL"] = ",".join(label)
-        return phased, v1s
+            v.line = None
+        output_v1s = []
+        last_pos = None
+        while v1s:
+            pos, v1 = heapq.heappop(v1s)
+            if pos == last_pos:
+                continue
+            last_pos = pos
+            output_v1s.append(v1)
+        return phased, output_v1s
 
     @staticmethod
     def match(
-        vars: List[Tuple[Any, Any]],
-        v1s: List[Tuple[int, str, int, Any]],
-        v2s: List[Tuple[int, str, int, Any]],
-    ) -> Dict[int, List[Optional[Tuple[str, List[str], Any]]]]:
+        vars: List[Any],
+        v1s: List[Tuple[int, Any]],
+        v2s: List[Tuple[int, Any]],
+    ) -> Dict[int, List[Any]]:
+        def _count_alt(v):
+            gt = map(int, re.split(r"\||/", v.samples[0]["GT"]))
+            res = {}
+            for k, c in Counter(gt).items():
+                if k != 0:
+                    res[v.alt[k - 1]] = c
+            return Counter(res)
+
         matched = {}
-        for pos, key, _, v in v1s:
-            matched.setdefault(pos, [None, None, None])[0] = (
-                key,
-                re.split(r"\||/", v.samples[0]["GT"]),
-                v,
-            )
-        for pos, key, _, v in v2s:
-            matched.setdefault(pos, [None, None, None])[1] = (
-                key,
-                re.split(r"\||/", v.samples[0]["GT"]),
-                v,
-            )
-        for key, v in vars:
-            matched.setdefault(v.pos, [None, None, None])[2] = (
-                key,
-                re.split(r"\||/", v.samples[0]["GT"]),
-                v,
-            )
+        for pos, v in v1s:
+            matched.setdefault(pos, [None, None, None])[0] = (_count_alt(v), v)
+        for pos, v in v2s:
+            matched.setdefault(pos, [None, None, None])[1] = (_count_alt(v), v)
+        for v in vars:
+            matched.setdefault(v.pos, [None, None, None])[2] = (_count_alt(v), v)
         keep = {}
         for pos, vs in matched.items():
             v1, v2, v = vs
-            if v2 and v1 or not v:
+            if not v:
                 continue
-            if v1 and v1[0] != v[0] or v2 and v2[0] != v[0]:
+
+            summed = Counter()
+            if v1:
+                summed += v1[0]
+            if v2:
+                summed += v2[0]
+            if summed != v[0]:
                 continue
-            if v1 and "0" in v1[1] or v2 and "0" in v2[1]:
-                continue
-            if any(x not in ("0", "1") for x in v[1]):
-                continue
-            if (
-                v1
-                and v1[1].count("1") == v[1].count("1")
-                or v2
-                and v2[1].count("1") == v[1].count("1")
-            ):
-                keep[pos] = vs
+            # all signal in phased comes from v2
+            if not v1:
+                if not v[1].id or v[1] == "." and len(v[1].ref) == 1:
+                    v[1].id = f"{pos}_{v[1].ref}"
+                    v[1].line = None
+            keep[pos] = (
+                v1[1] if v1 else None,
+                v2[1] if v2 else None,
+                v[1] if v else None,
+            )
         return keep
 
     def concat(self, in_vcfs: List[str], out_fname: str) -> None:
@@ -1254,9 +1242,7 @@ class Phased_vcf:
             else None
         )
         all_vars = [
-            (f"{v.ref}_{v.alt[0]}", v)
-            for v in vcf
-            if liftover_region and (v.chrom, v.pos) in liftover_region
+            v for v in vcf if liftover_region and (v.chrom, v.pos) in liftover_region
         ]
         all_v1s = []
         all_v2s = []
@@ -1268,7 +1254,7 @@ class Phased_vcf:
                     and (v1.chrom, v1.pos) in orig_region
                     and (not v1.filter or v1.filter in (".", "PASS"))
                 ):
-                    heapq.heappush(all_v1s, (v1.pos, f"{v1.ref}_{v1.alt[0]}", 0, v1))
+                    heapq.heappush(all_v1s, (v1.pos, v1))
         if in_vcf2:
             vcf2 = vcflib.VCF(in_vcf2)
             to_convert = [
@@ -1282,7 +1268,7 @@ class Phased_vcf:
             for v2 in self.gene.mapping.convert_vars(
                 to_convert, direction, ref_diff=False
             ):
-                heapq.heappush(all_v2s, (v2.pos, f"{v2.ref}_{v2.alt[0]}", 1, v2))
+                heapq.heappush(all_v2s, (v2.pos, v2))
         cns = params["cns"]
         if len(cns) != 2:
             self.logger.error(
@@ -1293,18 +1279,20 @@ class Phased_vcf:
         phased = []
         cur_ps = None
         out_vars = []
-        out_v1s = []
-        for _, v in all_vars:
+        out_var1s = []
+        for v1, _, phased_v in matched.values():
+            if v1:
+                heapq.heappush(out_var1s, (v1.pos, 0, v1))
+            heapq.heappush(out_vars, (phased_v.pos, 0, phased_v))
+        for v in all_vars:
             ps = v.samples[0].get("PS")
             if ps:
                 if cur_ps and cur_ps != ps:
                     phased, v1s = self.proc_phased(phased, cns, matched, gene_id)
                     for vv in phased:
-                        heapq.heappush(out_vars, (vv.pos, f"{vv.ref}_{vv.alt[0]}", vv))
+                        heapq.heappush(out_vars, (vv.pos, 1, vv))
                     for vv in v1s:
-                        heapq.heappush(
-                            all_v1s, (vv.pos, f"{vv.ref}_{vv.alt[0]}", 1, vv)
-                        )
+                        heapq.heappush(out_var1s, (vv.pos, 1, vv))
                     phased = []
                 phased.append(v)
                 cur_ps = ps
@@ -1313,46 +1301,37 @@ class Phased_vcf:
                 if len(gts) == 1 and gts != set("0"):  ## homvar
                     v1 = self.split_homvar(v, cns)
                     if v1:
-                        heapq.heappush(
-                            all_v1s, (v1.pos, f"{v1.ref}_{v1.alt[0]}", 1, v1)
-                        )
-                heapq.heappush(out_vars, (v.pos, f"{v.ref}_{v.alt[0]}", v))
+                        heapq.heappush(out_var1s, (v1.pos, 1, v1))
+                heapq.heappush(out_vars, (v.pos, 1, v))
         if cur_ps:
             phased, v1s = self.proc_phased(phased, cns, matched, gene_id)
             for vv in phased:
-                heapq.heappush(out_vars, (vv.pos, f"{vv.ref}_{vv.alt[0]}", vv))
+                heapq.heappush(out_vars, (vv.pos, 1, vv))
             for vv in v1s:
-                heapq.heappush(all_v1s, (vv.pos, f"{vv.ref}_{vv.alt[0]}", 1, vv))
-        last = None
-        while all_v1s:
-            cur = heapq.heappop(all_v1s)
-            if region1 and (cur[3].chrom, cur[3].pos) not in region1:
+                heapq.heappush(out_var1s, (vv.pos, 1, vv))
+        for _, v in all_v1s:
+            heapq.heappush(out_var1s, (v.pos, 2, v))
+        out_v1s = []
+        last_pos = None
+        last_i = -1
+        while out_var1s:
+            pos, i, v = heapq.heappop(out_var1s)
+            if region1 and (v.chrom, v.pos) not in region1:
                 continue
-            if last:
-                if last[:2] == cur[:2]:
-                    v = last[3]
-                    last_gt = re.split(r"\||/", last[3].samples[0]["GT"])
-                    cur_gt = re.split(r"\||/", cur[3].samples[0]["GT"])
-                    if (
-                        len(last_gt) == 2
-                        or last_gt == cur_gt
-                        or last[3].info.get("MQ", 0) > 40
-                    ):
-                        out_v1s.append(last[3])
-                    else:
-                        self.logger.debug(
-                            f"{self.gene.liftover_region_names[gene_id]}: {v.chrom}:{v.pos} {v.ref}-{','.join(v.alt)}: original GT {last[3].samples[0]['GT']} replaced with {cur[3].samples[0]['GT']}."
-                        )
-                        out_v1s.append(cur[3])
-                    last = None
-                    continue
-                out_v1s.append(last[3])
-            last = cur
-        if last:
-            out_v1s.append(last[3])
+            if last_pos and pos == last_pos and last_i < i:
+                continue
+            last_pos = pos
+            last_i = i
+            out_v1s.append(v)
         out_liftover = []
+        last_pos = None
+        last_i = -1
         while out_vars:
-            _, _, v = heapq.heappop(out_vars)
+            pos, i, v = heapq.heappop(out_vars)
+            if last_pos and pos == last_pos and last_i < i:
+                continue
+            last_pos = pos
+            last_i = i
             out_liftover.append(v)
         diff = params["cn_diff"]
         if diff < 0:
