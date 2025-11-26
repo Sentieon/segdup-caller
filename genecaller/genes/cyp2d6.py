@@ -324,7 +324,9 @@ class CYP2D6(Gene):
         for conv in result_data["gene_conversions"]:
             star_allele = conv.get("star_allele", "")
             converted_alleles = conv.get("converted_alleles", 0)
-            if converted_alleles < 0 and any(x in star_allele for x in ["*13", "*68", "*36"]):
+            if converted_alleles < 0 and any(
+                x in star_allele for x in ["*13", "*68", "*36"]
+            ):
                 cyp2d6_cn += abs(converted_alleles)
         star_result = star_caller.call_alleles(
             vcf_path, cyp2d6_cn, result_data.get("gene_conversions", [])
@@ -337,12 +339,9 @@ class CYP2D6(Gene):
             if "note" in star_result:
                 interpretation_lines.append(f"  Note: {star_result['note']}")
 
-        # 3. Phenotype prediction
-        phenotype = self._predict_phenotype(
-            cyp2d6_cn, result_data.get("gene_conversions", [])
-        )
+        phenotype = self._predict_phenotype(star_result.get("alleles", []))
         if phenotype:
-            interpretation_lines.append(f"\nPhenotype: {phenotype}")
+            interpretation_lines.append(f"Phenotype: {phenotype}")
 
         result_data["cn_interpretation"] = "\n".join(interpretation_lines)
         return result_data
@@ -400,27 +399,50 @@ class CYP2D6(Gene):
             return "May affect enzyme function"
         return ""
 
-    def _predict_phenotype(self, cyp2d6_cn: int, conversions: list) -> str:
-        """Predict metabolizer phenotype based on CN and structural variants."""
-        if cyp2d6_cn == 0:
-            return "Poor metabolizer (no functional copies)"
+    def _predict_phenotype(self, star_alleles: List[str]) -> str:
+        """Predict metabolizer phenotype based on star allele calls."""
+        if not star_alleles:
+            return "Unknown"
 
-        has_fusion = any(c.get("is_fusion_candidate", False) for c in conversions)
-        has_conversion = len(conversions) > 0
+        allele_to_function = {}
+        for allele_def in StarAlleleCaller(self.config).allele_defs:
+            allele_to_function[allele_def["allele"]] = allele_def["function"]
 
-        if cyp2d6_cn == 1:
-            if has_fusion or has_conversion:
-                return "Poor metabolizer (single copy with non-functional allele)"
-            return "Intermediate metabolizer (single functional copy)"
+        function_counts = {
+            "No Function": 0,
+            "Reduced": 0,
+            "Uncertain Function": 0,
+            "Normal": 0,
+        }
+        for allele in star_alleles:
+            allele_clean = allele.split("/")[0].strip()
+            if allele_clean == "*5":
+                function_counts["No Function"] += 1
+            elif allele_clean == "*1":
+                function_counts["Normal"] += 1
+            else:
+                func = allele_to_function.get(allele_clean, "Uncertain Function")
+                function_counts[func] += 1
 
-        elif cyp2d6_cn == 2:
-            if has_fusion or has_conversion:
-                return "Variable (depends on zygosity of structural variant)"
-            return "Normal metabolizer (likely *1/*1 or equivalent)"
+        no_func = function_counts["No Function"]
+        reduced = function_counts["Reduced"]
+        uncertain = function_counts["Uncertain Function"]
+        normal = function_counts["Normal"]
+        total = len(star_alleles)
 
-        elif cyp2d6_cn >= 3:
-            if has_fusion or has_conversion:
-                return "Variable (CN≥3 with structural variant)"
-            return "Potential ultra-rapid metabolizer (CN≥3)"
+        if no_func == total:
+            return "Poor metabolizer (no functional alleles)"
+        elif no_func >= 1 and no_func + reduced == total:
+            return "Poor metabolizer (all alleles non-functional or reduced)"
+        elif reduced == total:
+            return "Intermediate metabolizer (all reduced function)"
+        elif no_func >= 1 or reduced >= 1:
+            return "Intermediate metabolizer (mix of functional and impaired alleles)"
+        elif total >= 3 and normal >= 2:
+            return "Ultrarapid metabolizer (gene duplication with functional alleles)"
+        elif normal == total:
+            return "Normal metabolizer"
+        elif uncertain > 0:
+            return "Uncertain (contains alleles with unknown function)"
 
         return "Unknown"
