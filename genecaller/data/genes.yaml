@@ -1,4 +1,5 @@
 CFH:
+  gene_strand: "+"
   diff_vcf:
   - data/CFH.vcf.gz
   gene_names:
@@ -26,6 +27,7 @@ CFH:
       CFHR142: {0: 0.02, 1: 0.08, 2: 0.89, 3: 0.005, 4: 0.005}    # Deletion less common than CFHR31
       CFHR2: {0: 0.0005, 1: 0.0005, 2: 0.998, 3: 0.0005, 4: 0.0005}    # Very conserved
 CYP11B1:
+  gene_strand: "-"
   diff_vcf:
   - data/CYP11B1.vcf.gz
   - data/CYP11B2.vcf.gz
@@ -37,6 +39,7 @@ CYP11B1:
   - chr8:142910764-142917977
   map: data/CYP11B1_CYP11B2.dat
 CYP2D6:
+  gene_strand: "-"
   diff_vcf:
   - data/CYP2D6.vcf.gz
   - data/CYP2D7.vcf.gz
@@ -46,12 +49,31 @@ CYP2D6:
   gene_regions:
   - chr22:42123192-42132193
   - chr22:42135344-42145873
+  liftover_regions:
+  - - CYP2D6
+    - chr22:42123192-42125960,chr22:42125961-42132193
+  - - CYP2D7
+    - chr22:42135344-42138112,chr22:42139675-42145873
   map: data/CYP2D6_CYP2D7.dat
+  recombination_regions:
+    - chr22:42126500-42126800  # Exon 9 - for CYP2D6*36 & *4N
+    - chr22:42126800-42128000  # Intron 7 - major recombination hotspot
+    - chr22:42129700-42130900  # Intron 1 - major recombination hotspot
+  conversion_regions:
+  - region: "chr22:42123192-42132193"
+    fusion_detection: true
+    three_prime_terminus: 42126499
+    five_prime_terminus: 42130865
   config:
     prior_type: gamma        # Allows asymmetric distribution
     gamma_shape: 3.0         # Shape parameter (α)
     gamma_scale: 0.67        # Scale parameter (β), mean = α×β = 2.0
+    transition_rate_background: 1e-8  # Very sticky in stable exonic regions
+    transition_rate_hotspot: 0.001    # Loose in recombination hotspots
+    star_allele_file: data/cyp2d6_star_alleles.tsv
+    backbone_file: data/cyp2d6_backbone.tsv
 GBA:
+  gene_strand: "-"
   diff_vcf:
   - data/GBA1.vcf.gz
   - data/GBAP1.vcf.gz
@@ -62,7 +84,21 @@ GBA:
   - chr1:155230976-155241868
   - chr1:155210382-155219657
   map: data/GBA1_GBAP1.dat
+  liftover_regions:
+  - - GBA1
+    - chr1:155230976-155237609,chr1:155237930-155238947,chr1:155239581-155240164,chr1:155240477-155241868
+  - - GBAP1
+    - chr1:155210382-155216652,chr1:155216653-155217669,chr1:155217670-155218238,chr1:155218239-155219657
+  conversion_regions:
+  - region: "chr1:155233000-155237609"
+    three_prime_terminus: 155234452
+    fusion_detection: true
+  config:
+    cn_priors:
+      GBA1: {0: 0.0005, 1: 0.001, 2: 0.9975, 3: 0.0005, 4: 0.0005}   # Highly conserved
+      GBAP1: {0: 0.05, 1: 0.20, 2: 0.74, 3: 0.005, 4: 0.005}        # Deletion-prone pseudogene
 NCF1:
+  gene_strand: "+"
   diff_vcf:
   - data/NCF1.vcf.gz
   - data/NCF1B.vcf.gz
@@ -74,6 +110,7 @@ NCF1:
   - chr7:73215625-73238945
   map: data/NCF1_NCF1B.dat
 PMS2:
+  gene_strand: "-"
   diff_vcf:
   - data/PMS2.vcf.gz
   - data/PMS2CL.vcf.gz
@@ -88,6 +125,7 @@ PMS2:
     prior_type: gaussian  # Conservative symmetric prior
     cn_prior_std: 0.5     # Tight around CN=2 for highly conserved gene
 SMN1:
+  gene_strand: "+"
   diff_vcf:
   - data/SMN1.vcf.gz
   - data/SMN2.vcf.gz
@@ -106,6 +144,7 @@ SMN1:
       SMN1_3.5kdel: 0.02    # Less common deletion
       SMN2_6.3kdel: 0.20    # SMN2 deletions also occur
 STRC:
+  gene_strand: "-"
   diff_vcf:
   - data/STRC.vcf.gz
   - data/STRCP1.vcf.gz
@@ -117,6 +156,7 @@ STRC:
   - chr15:43698817-43719466
   map: data/STRC_STRCP1.dat
 HBA:
+  gene_strand: "+"
   tandem: true
   diff_vcf:
   - data/HBA.vcf.gz
@@ -138,3 +178,4 @@ main:
   cnv_model: data/SentieonGeneCaller0.1.bundle/cnv.model
   min_map_qual: 45
   cn_prior_std: 2
+  conversion_db: data/known_gene_conversions.tsv

@@ -1,0 +1,19 @@
+##file_format=KnownGeneConversionDB_v1.0
+##reference_genome=GRCh38
+##description=A database of known gene conversion events (complex alleles) and their signature variants.
+##column_definitions=<ID=event_name,Description="Common name or ID for the conversion event (e.g., RecNciI, GBA-J1)">
+##column_definitions=<ID=recipient_gene,Description="Gene symbol of the recipient locus (e.g., GBA)">
+##column_definitions=<ID=recipient_locus,Description="Genomic region (chr:start-end) containing all signature variants">
+##column_definitions=<ID=donor_gene,Description="Gene symbol of the donor locus (e.g., GBAP1)">
+##column_definitions=<ID=donor_locus,Description="Genomic region (chr:start-end) of the corresponding donor sequence">
+##column_definitions=<ID=signature_variants,Description="Pipe-separated list of signature variant IDs (Signal.id field values), or NA if position-based only">
+#event_name	recipient_gene	recipient_locus	donor_gene	donor_locus	signature_variants	event_type	min_match_threshold
+GBA1::GBAP1_Fusion	GBA1	chr1:155234000-155238000	GBAP1	chr1:155213373-155216723	NA	FUSION	0.6
+RecTL	GBA1	chr1:155235203-155235806	GBAP1	chr1:155216891-155216985	c.1263del|D409H|L483P|A495P|V499V	CONVERSION	0.8
+RecNciI	GBA1	chr1:155235203-155235252	GBAP1	chr1:155214576-155214625	L483P|A495P|V499V	CONVERSION	0.8
+L483P	GBA1	chr1:155235252	GBAP1	chr1:155214625	L483P	CONVERSION	0.8
+A495P	GBA1	chr1:155235217	GBAP1	chr1:155214590	A495P	CONVERSION	0.8
+V499V	GBA1	chr1:155235203	GBAP1	chr1:155214576	V499V	CONVERSION	0.8
+c.1263del	GBA1	chr1:155235749-155235805	GBAP1	chr1:155215121-155215122	c.1263del	CONVERSION	0.8
+D409H	GBA1	chr1:155235727	GBAP1	chr1:155215100	D409H	CONVERSION	0.8
+CYP2D6*36_Exon9	CYP2D6	chr22:42126600-42126660	CYP2D7	chr22:42139300-42139360	rs1135833|E9_Frameshift	CONVERSION	0.5

@@ -1,14 +1,13 @@
 from .util import IntervalList, GeneMapping, get_data_file
 from .logging import get_logger
-from .gene_model import create_gene_priors, GenePriors
+from .gene_model import create_gene_priors, GenePriors, GeneConversionSegment
+from .conversion_detector import GeneConversionDetector
 import copy
 from genecaller.bam_process import CopyNumberModel, Phased_vcf
 from concurrent.futures import ThreadPoolExecutor
 import heapq
 import vcflib
-import pandas as pd
 from typing import List, Dict, Tuple, Any, Optional
-import scipy
 import numpy as np
 
 
@@ -38,6 +37,8 @@ class GeneRegion:
         self.orig_region_id = region_id
         self.orig_longdel_id = longdel_id
 
+    # merge with another region if they are the same region_id, dup, longdel_id and contiguous
+    # return True if merged, False otherwise
     def merge(self, region: "GeneRegion") -> bool:
         if (
             self.region_id != region.region_id
@@ -56,6 +57,19 @@ class GeneRegion:
         self.region = ",".join(merged)
         return True
 
+    # test if two regions overlap
+    # return True if overlap, False otherwise
+    def is_overlap(self, region: str) -> bool:
+        overlap = (
+            IntervalList(region=self.region)
+            .intersect(IntervalList(region=region))
+            .to_region_str()
+            .split(",")
+        )
+        return len(overlap) > 0 and overlap[0] != ""
+
+    # Perform liftover for the gene region
+    # Modify the region in place
     def liftover(self, mapping: "GeneMapping") -> None:
         try:
             r = mapping.interval(self.region, direction="auto")
@@ -63,16 +77,19 @@ class GeneRegion:
             raise RuntimeError("Failed to liftover")
         self.region = r
 
+    # return size of the region
     def size(self) -> int:
         _, s, e = self.get_region()
         return e - s
 
+    # return chrom, start, end of the region
     def get_region(self) -> Tuple[str, int, int]:
         flds = self.region.split(":")
         c = flds[0]
         locs = flds[1].split("-")
         return c, int(locs[0]), int(locs[1])
 
+    # set region to c:s-e
     def set_region(self, c: str, s: int, e: int) -> None:
         self.region = f"{c}:{s}-{e}"
 
@@ -262,14 +279,19 @@ class GeneRegion:
 class Gene:
     high_mq_regions = {}
     cn_prior_std = 2
+    conversion_db = None  # Path to known gene conversion database
     _log_priors = {}  # DEPRECATED: kept for backward compatibility
     _longdel_log_priors = {}  # Pre-calculated log priors for long deletions
     _priors: Optional[GenePriors] = None  # GenePriors instance for CN prior calculation
+    converted_segments: List[GeneConversionSegment] = []
 
     def __init__(self, cfg: dict) -> None:
         self.config = cfg.get("config", {})
+        self.gene_strand = cfg["gene_strand"]
         self.gene_names = cfg["gene_names"]
         self.gene_regions = cfg["gene_regions"]
+        self.conversion_regions = cfg.get("conversion_regions", [])
+        self.recombination_regions = cfg.get("recombination_regions", None)
         self.result_vcfs = []
         self.diff_vcf = [get_data_file(p) for p in cfg["diff_vcf"]]
         assert all(self.diff_vcf)
@@ -398,8 +420,8 @@ class Gene:
         no_custom = "cn_regions" not in config
         for i, r in enumerate(self.gene_regions):
             region_id = i + 1 if no_custom else 0
-            if "liftover_regions" in config and ignore_nondup:
-                region_id = -1
+            # if "liftover_regions" in config and ignore_nondup:
+            #     region_id = -1
             self.all_regions.append(GeneRegion(r, region_id, self.gene_names[i], i + 1))
         self.all_vars = {"cns": {}, "dels": {}}
         if not ignore_nondup:
@@ -424,7 +446,7 @@ class Gene:
                     regions.append(
                         GeneRegion(
                             liftover_regions[i][j],
-                            (num_nondup + i) & no_custom,
+                            (num_nondup + i + 1) if no_custom else 0,
                             n,
                             i + 1,
                         )
@@ -432,7 +454,7 @@ class Gene:
                     sd_regions.append(
                         GeneRegion(
                             liftover_regions[i][j],
-                            (num_nondup + i) & no_custom,
+                            (num_nondup + i + 1) if no_custom else 0,
                             n,
                             i + 1,
                         )
@@ -495,6 +517,63 @@ class Gene:
             cns[v["name"]] = 2 + v["cn_diff"]
         for _, v in self.all_vars["dels"].items():
             cns[v["name"]] = v["cn_diff"]
+
+        # Load known conversions if database is configured
+        known_conversions = []
+        if self.conversion_db:
+            known_conversions = GeneConversionDetector.load_known_conversions(
+                self.conversion_db
+            )
+
+        result_data["gene_conversions"] = []
+        for seg in self.converted_segments:
+            is_fusion = getattr(seg, "is_fusion_candidate", False)
+            conversion_data = {
+                "region": f"{self.chr}:{seg.start}-{seg.end}",
+                "converted_alleles": int(seg.conversion_allele_count),
+                "is_fusion_candidate": bool(is_fusion),
+            }
+            if is_fusion:
+                fusion_type = getattr(seg, "fusion_type", None)
+                if fusion_type:
+                    conversion_data["fusion_type"] = fusion_type
+            else:
+                conversion_data["conversion_sites"] = [
+                    s.id for s in seg.signals if s.is_conversion_site()
+                ]
+
+            # Match against known conversions if available
+            if known_conversions:
+                matches = GeneConversionDetector.match_known_conversion(
+                    seg, known_conversions, self.gene_names, match_threshold=0.8
+                )
+                if matches:
+                    if not is_fusion:
+                        conversion_data["interpretation"] = [
+                            {
+                                "event_name": event_name,
+                                "match_score": score,
+                                "matched_variants": list(matched_ids),
+                            }
+                            for event_name, score, matched_ids in matches
+                        ]
+                    else:
+                        conversion_data["interpretation"] = [
+                            {
+                                "event_name": event_name,
+                            }
+                            for event_name, _, _ in matches
+                        ]
+                else:
+                    event_type = "fusion" if is_fusion else "conversion"
+                    # conversion_data["interpretation"] = (
+                    #     f"Novel {event_type} (no known match)"
+                    # )
+            else:
+                conversion_data["interpretation"] = "No conversion database configured"
+
+            result_data["gene_conversions"].append(conversion_data)
+
         return result_data
 
     def solve_longdel(self) -> None:
@@ -1272,7 +1351,87 @@ class Gene:
         out_vcf.close()
         self.result_vcfs = out_vcf_fname
 
+    def detect_gene_conversions(self) -> None:
+        """Detect gene conversions across all configured conversion regions."""
+        if not self.conversion_regions:
+            return
 
-class SMN1(Gene):
-    def prepare_output(self) -> Dict[str, Any]:
-        return super().prepare_output()
+        self.logger.info(
+            f"Performing gene conversion detection on {len(self.conversion_regions)} region(s)"
+        )
+
+        all_segments = []
+        for conversion_config in self.conversion_regions:
+            # Get conversion region coordinates
+            chrom, region_start, region_end = (
+                conversion_config["region"].split(":")[0],
+                int(conversion_config["region"].split(":")[1].split("-")[0]),
+                int(conversion_config["region"].split(":")[1].split("-")[1]),
+            )
+
+            # Find all overlapping duplicated regions and group by copy number
+            # Split conversion detection if CN changes within the conversion region
+            segments_by_cn = []  # List of (cns, start, end, vcf_files)
+            current_cns = None
+            current_start = region_start
+            current_vcfs = []
+
+            for r in self.merged_regions:
+                if not r.dup:
+                    continue
+
+                # Check if region overlaps with conversion region
+                r_chrom, r_start, r_end = r.get_region()
+                if r_chrom != chrom:
+                    continue
+                if r_end <= region_start or r_start >= region_end:
+                    continue
+
+                # Get copy numbers for this region: [ref_count, alt_count]
+                region_cns = [r.cn, r.total_cn - r.cn]
+
+                # Check if CN changed - need to split detection
+                if current_cns is None:
+                    # First overlapping region
+                    current_cns = region_cns
+                    current_vcfs = [r.phased_vcf["short_read"]["liftover"]]
+                elif region_cns == current_cns:
+                    # Same CN, continue accumulating
+                    current_vcfs.append(r.phased_vcf["short_read"]["liftover"])
+                else:
+                    # CN changed - save current segment and start new one
+                    segments_by_cn.append(
+                        (current_cns, current_start, r_start, current_vcfs)
+                    )
+                    current_cns = region_cns
+                    current_start = r_start
+                    current_vcfs = [r.called_vcf["short_read"]["liftover"]]
+
+            # Add final segment
+            if current_cns is not None and current_vcfs:
+                segments_by_cn.append(
+                    (current_cns, current_start, region_end, current_vcfs)
+                )
+
+            # Run conversion detection for each CN-uniform segment
+            for cns, seg_start, seg_end, vcf_files in segments_by_cn:
+                cfg = copy.deepcopy(conversion_config)
+                cfg["conversion_region"] = f"{chrom}:{seg_start}-{seg_end}"
+                cfg["copy_numbers"] = cns
+                cfg["gene_strand"] = self.gene_strand
+
+                detector = GeneConversionDetector(self, cfg)
+                detector.load_variants(set(vcf_files))
+                segments = detector.detect_conversions()
+                all_segments.extend(segments)
+
+        self.logger.info(
+            f"Gene conversion detection complete: found {len(all_segments)} conversion segment(s)"
+        )
+        for i, seg in enumerate(all_segments, 1):
+            self.logger.info(
+                f"  Conversion {i}: {seg.start}-{seg.end} ({seg.end - seg.start} bp), "
+                f"{seg.num_sites} sites, converted {seg.conversion_allele_count} alleles"
+            )
+
+        self.converted_segments = all_segments
