@@ -13,6 +13,7 @@ import subprocess
 import shutil
 from packaging.version import Version
 from importlib import resources
+import os
 
 from .logging import get_logger
 
@@ -22,15 +23,15 @@ logger = get_logger(__name__)
 def get_cmd(
     cmd: str,
     version: Optional[Version] = None,
-) -> Optional[str]:
-    """Check the version of an executable"""
+    return_version: bool = False,
+) -> Optional[Union[str, Tuple[str, str]]]:
     cmd_list: List[str] = cmd.split()
     exec_file = shutil.which(cmd_list[0])
     if not exec_file:
         logger.error("Error: no '%s' found in the PATH", cmd)
         return None
 
-    if version is None:
+    if version is None and not return_version:
         return exec_file
 
     cmd_list.append("--version")
@@ -44,20 +45,41 @@ def get_cmd(
     elif cmd_list[0] == "hificnv":
         cmd_version_str = cmd_version_str.split(" ")[1].split("-")[0]
     else:
-        # handle, e.g. bcftools which outputs multiple lines.
         cmd_version_str = cmd_version_str.split("\n")[0].split()[-1].split("-")[0]
-    cmd_version = Version(cmd_version_str)
-    if cmd_version < version:
-        logger.error(
-            "Error: the pipeline requires %s version '%s' or later "
-            "but %s '%s' was found in the PATH",
-            cmd,
-            version,
-            cmd,
-            cmd_version,
-        )
-        return None
+
+    if version is not None:
+        cmd_version = Version(cmd_version_str)
+        if cmd_version < version:
+            logger.error(
+                "Error: the pipeline requires %s version '%s' or later "
+                "but %s '%s' was found in the PATH",
+                cmd,
+                version,
+                cmd,
+                cmd_version,
+            )
+            return None
+
+    if return_version:
+        return exec_file, cmd_version_str
     return exec_file
+
+
+def get_software_versions(calling_min_versions: Dict) -> Dict[str, str]:
+    versions = {}
+    for cmd_full in calling_min_versions.keys():
+        tool_name = cmd_full.split()[0]
+        try:
+            result = get_cmd(cmd_full, return_version=True)
+            if result:
+                _, version_str = result
+                versions[tool_name] = version_str
+            else:
+                versions[tool_name] = "unknown"
+        except Exception as e:
+            logger.warning(f"Could not determine version for {tool_name}: {e}")
+            versions[tool_name] = "unknown"
+    return versions
 
 
 def get_data_file(input_filename: str) -> Optional[str]:
@@ -66,7 +88,6 @@ def get_data_file(input_filename: str) -> Optional[str]:
     then checks if the path exists as-is, then looks within the package's 'data' directory.
     Returns the path to the file.
     """
-    import os
 
     # Handle bundle logic on the original path: only when second-to-last component ends with .bundle
     parts = input_filename.split("/")
@@ -472,10 +493,10 @@ class GeneMapping:
                     + fields[2:4]
                     + [int(s) - 1 for s in fields[4:]]
                 )
-                self.reverse = e2 < s2
+                self.reverse = e2 < s2  # type: ignore
                 if c1 == s1 and c2 == s2:
                     if self.reverse:
-                        s2 = e2 + 1
+                        s2 = e2 + 1  # type: ignore
                     self.map12.append(Mapping(s1, s2, r1, r2))
                     self.map21.append(Mapping(s2, s1, r2, r1))
                     if combine:
@@ -498,7 +519,7 @@ class GeneMapping:
             mapping = self.g1tog2
         elif direction == "backward":
             mapping = self.g2tog1
-        else: # "auto detection"
+        else:  # "auto detection"
             if s in self.g1tog2 or s + 5 in self.g1tog2 or s - 5 in self.g1tog2:
                 mapping = self.g1tog2
             elif s in self.g2tog1 or s + 5 in self.g2tog1 or s - 5 in self.g2tog1:
@@ -510,9 +531,9 @@ class GeneMapping:
         if s - 5 in mapping:
             return mapping[s - 5] + 5
         if s + 5 in mapping:
-            return mapping[s+5] - 5
+            return mapping[s + 5] - 5
         raise ValueError(f"position {s} not in mapping")
-    
+
     def interval(self, region: str, direction="auto") -> str:
         if not region:
             return ""
@@ -525,7 +546,7 @@ class GeneMapping:
                 if self.reverse and s1 < m1 or not self.reverse and s1 > m1:
                     n, ss = 0, s
                     while True:
-                        n, ss = n+1, ss+1 
+                        n, ss = n + 1, ss + 1
                         ss1 = func(ss)
                         if self.reverse and ss1 >= m1 or not self.reverse and ss1 <= m1:
                             s1 = ss1 + n if self.reverse else ss1 - n

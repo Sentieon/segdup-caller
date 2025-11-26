@@ -4,17 +4,21 @@ import argparse
 import yaml
 import shutil
 import logging
+import time
+import resource
 from typing import Dict, Any
 from genecaller.logging import get_logger, set_global_log_level
-from genecaller.util import get_cmd, IntervalList, load_bam, get_data_file
+from genecaller.util import get_cmd, IntervalList, load_bam, get_data_file, get_software_versions
 from genecaller.bam_process import Bam
 from genecaller.gene import Gene
+from genecaller.genes import get_gene_class
 from genecaller import __version__
 import tempfile
 import copy
 from packaging.version import Version
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import cpu_count
+from datetime import datetime
 
 logger = get_logger(__name__)
 
@@ -66,6 +70,8 @@ def process_single_gene(gene_data: tuple) -> Dict:
         gene_logger.info("Call small variants...")
         gene.call_small_var()
         gene.resolve_phased(params)
+
+        gene.detect_gene_conversions()
 
         # Prepare output
         gene_logger.info("Prepare final output")
@@ -159,7 +165,14 @@ class GeneCaller:
 
                 serialized = json.dumps(data, indent=4)
             else:
-                serialized = yaml.dump(data, default_flow_style=False)
+                # Configure YAML to use literal block style (|) for multiline strings
+                def str_representer(dumper, data):
+                    if '\n' in data:
+                        return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
+                    return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+
+                yaml.add_representer(str, str_representer)
+                serialized = yaml.dump(data, default_flow_style=False, allow_unicode=True)
             fout.write(serialized)
 
     def print_param(self) -> None:
@@ -206,8 +219,7 @@ class GeneCaller:
         parser.add_argument(
             "--genes",
             "-g",
-            required=True,
-            help=f"List of genes to be called (comma separated). \nSupported genes: {', '.join(default_genes)}",
+            help=f"List of genes to be called (comma separated). If not specified, all supported genes will be called. \nSupported genes: {', '.join(default_genes)}",
         )
         parser.add_argument(
             "--sample_name",
@@ -267,14 +279,28 @@ class GeneCaller:
         config["main"]["sr_model"] = args.sr_model + "/dnascope.model"
         if args.lr_model:
             config["main"]["lr_model"] = args.lr_model + "/diploid_model"
-        genes = [s.strip().upper() for s in args.genes.split(",")]
+
+        # If no genes specified, use all available genes
+        if args.genes:
+            genes = [s.strip().upper() for s in args.genes.split(",")]
+        else:
+            genes = default_genes
+            logger.info(f"No genes specified, will process all available genes: {', '.join(genes)}")
+
         missing = [g for g in genes if g not in config]
         if missing:
             raise Exception(
                 f"Genes {', '.join(missing)} are not supported at this moment. Below is a list of supported regions: \n{', '.join(list(config.keys()))}"
             )
         Gene.cn_prior_std = config["main"].get("cn_prior_std", 2)
-        self.genes = [Gene(config[g]) for g in genes]
+
+        # Set conversion database path if specified in config
+        conversion_db_path = config["main"].get("conversion_db", None)
+        if conversion_db_path:
+            Gene.conversion_db = get_data_file(conversion_db_path)  # type: ignore
+
+        # Instantiate genes using gene-specific classes if available
+        self.genes = [get_gene_class(g)(config[g]) for g in genes]
         self.input = args.short, args.long
         self.ref = args.reference
 
@@ -323,6 +349,7 @@ class GeneCaller:
                 "threads": args.threads,
             }
         )
+        self.args = args
         self.print_param()
 
     def _validate_input_files(self) -> None:
@@ -453,18 +480,65 @@ class GeneCaller:
 
     def call(self) -> None:
         self.load_params()
-
-        # Check if required files exist before processing
         self._validate_input_files()
 
-        result = {}
+        t0 = time.time()
+        start_datetime = datetime.now()
 
-        # Use parallel processing if multiple genes and threads > 1
         if len(self.genes) > 1 and self.params["threads"] > 1:
             logger.info(
                 f"Processing {len(self.genes)} genes in parallel using {self.params['threads']} threads"
             )
         result = self.process_genes()
+
+        t1 = time.time()
+        mm, ut, st = 0, 0, 0
+        for who in (resource.RUSAGE_SELF, resource.RUSAGE_CHILDREN):
+            ru = resource.getrusage(who)
+            mm += ru.ru_maxrss * 1024
+            ut += ru.ru_utime
+            st += ru.ru_stime
+
+        logger.info(
+            f"Resource usage: {mm} mem {ut:.3f} user {st:.3f} sys {t1-t0:.3f} real"
+        )
+
+        config_section = {
+            "software_versions": {
+                "segdup-caller": __version__,
+                **get_software_versions(CALLING_MIN_VERSIONS),
+            },
+            "run_date": start_datetime.strftime("%Y-%m-%d"),
+            "run_time": start_datetime.strftime("%H:%M:%S"),
+            "run_datetime": start_datetime.isoformat(),
+            "resource_usage": {
+                "memory_bytes": mm,
+                "user_time_seconds": round(ut, 3),
+                "system_time_seconds": round(st, 3),
+                "wall_time_seconds": round(t1 - t0, 3),
+            },
+            "job_options": {
+                "short_read_bam": self.args.short,
+                "reference": self.args.reference,
+                "sr_model": self.args.sr_model,
+                "genes": self.args.genes if self.args.genes else "all",
+                "outdir": self.args.outdir,
+                "sample_name": self.params["sample_name"],
+                "sr_prefix": self.args.sr_prefix,
+                "lr_prefix": self.args.lr_prefix,
+                "threads": self.args.threads,
+                "keep_temp": self.args.keep_temp,
+                "log_level": self.args.log_level,
+            },
+        }
+
+        if self.args.long:
+            config_section["job_options"]["long_read_bam"] = self.args.long
+            config_section["job_options"]["lr_model"] = self.args.lr_model
+        if self.args.config:
+            config_section["job_options"]["config"] = self.args.config
+
+        result["config"] = config_section
 
         self.save_data(
             result, f"{self.params['outdir']}/{self.params['sample_name']}.yaml"
