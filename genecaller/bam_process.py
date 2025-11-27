@@ -291,6 +291,7 @@ class Bam:
                 )
             )
         depth_df = pd.read_csv(tmp_output_norm, sep="\t")[depth_fields]
+        depth_df["contig"] = depth_df["contig"].astype(str)
         depth_df["DP"] /= self.dp_norm
         depth_df["DP0"] /= self.dp_norm
         high_mq_depth_df = depth_df[depth_df["MQ"] > 50]
