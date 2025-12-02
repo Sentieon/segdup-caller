@@ -8,7 +8,13 @@ import time
 import resource
 from typing import Dict, Any
 from genecaller.logging import get_logger, set_global_log_level
-from genecaller.util import get_cmd, IntervalList, load_bam, get_data_file, get_software_versions
+from genecaller.util import (
+    get_cmd,
+    IntervalList,
+    load_bam,
+    get_data_file,
+    get_software_versions,
+)
 from genecaller.bam_process import Bam
 from genecaller.gene import Gene
 from genecaller.genes import get_gene_class
@@ -167,12 +173,16 @@ class GeneCaller:
             else:
                 # Configure YAML to use literal block style (|) for multiline strings
                 def str_representer(dumper, data):
-                    if '\n' in data:
-                        return dumper.represent_scalar('tag:yaml.org,2002:str', data, style='|')
-                    return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+                    if "\n" in data:
+                        return dumper.represent_scalar(
+                            "tag:yaml.org,2002:str", data, style="|"
+                        )
+                    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
 
                 yaml.add_representer(str, str_representer)
-                serialized = yaml.dump(data, default_flow_style=False, allow_unicode=True)
+                serialized = yaml.dump(
+                    data, default_flow_style=False, allow_unicode=True
+                )
             fout.write(serialized)
 
     def print_param(self) -> None:
@@ -285,12 +295,14 @@ class GeneCaller:
             genes = [s.strip().upper() for s in args.genes.split(",")]
         else:
             genes = default_genes
-            logger.info(f"No genes specified, will process all available genes: {', '.join(genes)}")
+            logger.info(
+                f"No genes specified, will process all available genes: {', '.join(genes)}"
+            )
 
         missing = [g for g in genes if g not in config]
         if missing:
             raise Exception(
-                f"Genes {', '.join(missing)} are not supported at this moment. Below is a list of supported regions: \n{', '.join(list(config.keys()))}"
+                f"Genes {', '.join(missing)} are not supported at this moment. Below is a list of supported regions: \n{', '.join(default_genes)}"
             )
         Gene.cn_prior_std = config["main"].get("cn_prior_std", 2)
 
@@ -500,7 +512,7 @@ class GeneCaller:
             st += ru.ru_stime
 
         logger.info(
-            f"Resource usage: {mm} mem {ut:.3f} user {st:.3f} sys {t1-t0:.3f} real"
+            f"Resource usage: {mm} mem {ut:.3f} user {st:.3f} sys {t1 - t0:.3f} real"
         )
 
         config_section = {
