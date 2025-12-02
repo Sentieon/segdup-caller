@@ -12,34 +12,6 @@ The CFH gene cluster on chromosome 1 (chr1:196,652,043-196,948,803) spans approx
 - **Region-specific priors**: Different Bayesian priors for each region reflecting population frequencies
 - **High homology resolution**: Liftover and phasing resolve >99% identical regions
 
-## Clinical Significance
-
-### Disease Associations
-
-Structural variations in the CFH gene cluster are associated with:
-
-**Atypical Hemolytic Uremic Syndrome (aHUS)**:
-- Rare disease with abnormal blood clotting in small vessels
-- Can be caused by variants in CFH or CFHR genes
-- CFH deletions/variants can impair complement regulation
-
-**Age-Related Macular Degeneration (AMD)**:
-- Leading cause of vision loss in older adults
-- CFHR3+CFHR1 deletion has complex association:
-  - **Protective effect** for AMD in some studies
-  - **Risk factor** in combination with certain CFH variants
-- CFH variants (e.g., Y402H) are major AMD risk factors
-
-### CNV Frequency and Clinical Impact
-
-| CNV Event | Frequency | Clinical Significance |
-|-----------|-----------|----------------------|
-| **CFHR3+CFHR1 deletion (het)** | ~30-40% | Common; protective for AMD in some contexts |
-| **CFHR3+CFHR1 deletion (hom)** | ~20% | Common; benign or protective |
-| **CFHR1+CFHR4 deletion** | Rare | May affect complement regulation |
-| **CFHR duplications** | <1% | Clinical significance unclear |
-| **CFH deletions/CNVs** | Very rare | Clinically significant; aHUS risk |
-
 ## CFH Gene Cluster Structure
 
 ### Genomic Organization
@@ -79,7 +51,19 @@ The cluster contains multiple pairs of high-homology regions with >99% sequence 
    - Highly conserved
    - CNVs extremely rare (>99.5% have CN=2)
 
+### CNV Frequency and Clinical Impact
+
+| CNV Event | Frequency | Clinical Significance |
+|-----------|-----------|----------------------|
+| **CFHR3+CFHR1 deletion (het)** | ~30-40% | Common; protective for AMD in some contexts |
+| **CFHR3+CFHR1 deletion (hom)** | ~20% | Common; benign or protective |
+| **CFHR1+CFHR4 deletion** | Rare | May affect complement regulation |
+| **CFHR duplications** | <1% | Clinical significance unclear |
+| **CFH deletions/CNVs** | Very rare | Clinically significant; aHUS risk |
+
 ## Example Outputs
+
+> **Note**: Clinical significance and interpretation information in the output examples below is for **Educational and Informational purposes only**.
 
 ### Example 1: Common CFHR3+CFHR1 Deletions
 
@@ -150,13 +134,6 @@ CFH:
 | 2 | 2 | 3 | 2 | CFHR1/CFHR4 duplication | Rare (<1%); clinical significance unclear |
 | 1 | 2 | 2 | 2 | CFH heterozygous deletion | **Very rare; clinically significant; aHUS risk** |
 
-### Clinical Interpretation Considerations
-
-- **CFHR3+CFHR1 deletions**: Very common and generally benign; context-dependent AMD association
-- **CFH CNVs**: Rare but clinically important; associated with aHUS and complement dysregulation
-- **Compound deletions**: May have additive effects on complement regulation
-- **Clinical context**: Interpret in context of complement studies, kidney function, ocular findings
-
 ## Gene-Specific Implementation Details
 
 ### Region-Specific Copy Number Priors
@@ -197,7 +174,7 @@ The caller performs **simultaneous optimization** across all four regions, which
 
 ### HPRC v2.0 Benchmark
 
-Validated on **213 diverse samples** from HPRC v2.0 with truth CN calls derived from assemblies:
+Validated on **213 diverse samples** from HPRC v2.0 with truth CN calls derived from assemblies. For this validation, we only used Illumina short reads downloaded from s3://human-pangenomics/. 
 
 | Metric | Value |
 |--------|-------|
@@ -253,7 +230,6 @@ These frequencies validate the region-specific Bayesian priors used in the model
 - **Rare complex rearrangements**: Unusual structural variants beyond simple CNVs may require manual review
 - **Small variants in homologous regions**: Variants in >99% identical segments may be challenging to phase
 - **Novel fusion genes**: CFH::CFHR or CFHR::CFHR fusion genes from non-allelic homologous recombination may not be fully characterized
-- **Clinical interpretation**: CNV clinical significance is context-dependent and evolving
 
 ## CFH-Specific Resources
 

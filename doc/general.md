@@ -10,6 +10,12 @@ The tool processes both short-read and long-read whole-genome sequencing (WGS) d
 - **Ploidy-aware variant calling** adjusted for local copy number
 - **Star allele nomenclature** (for pharmacogenes like CYP2D6)
 
+### Research Use Only Disclaimer
+
+**THIS TOOL IS FOR RESEARCH USE ONLY AND IS NOT A VALIDATED CLINICAL TEST.**
+
+The Sentieon Segdup Gene Caller has not been validated for clinical diagnostic purposes. Clinical notes and significance information provided in the output YAML files are for **Educational and Informational purposes only** and should not be used as the sole basis for clinical decision-making.
+
 ## Supported Genes
 
 Currently supported gene families include:
@@ -134,6 +140,8 @@ The Segdup Caller generates consistent output files across all genes:
 - Star alleles and phenotype predictions (for pharmacogenes)
 - Clinical interpretation summary
 - Path to gene-specific VCF files
+
+> **Note**: Clinical significance and interpretation information in the YAML output is for **Educational and Informational purposes only**.
 
 **Example structure** (multiple genes):
 ```yaml
@@ -291,8 +299,8 @@ segdup-caller \
   - Minimum: 20× (reduced accuracy for CNV and conversions)
   - Optimal: 30-50×
   - Higher coverage (>50×) provides marginal improvements
-- **Read length**: ≥100 bp (150 bp preferred)
-- **Sequencing platform**: Illumina short-read sequencing
+- **Short-read length**: ≥150 bp
+- **Short-read Sequencing platform**: Illumina, MGI, Element Biosciences, or GeneMind short-read sequencing
 
 ### Software Dependencies
 

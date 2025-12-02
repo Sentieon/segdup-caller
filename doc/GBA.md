@@ -10,33 +10,6 @@ GBA (glucocerebrosidase) is a critical lysosomal enzyme gene associated with Gau
 - **Gene conversion detection**: Identifies RecNciI, RecTL, and other conversion events
 - **Fusion allele detection**: Detects GBA1::GBAP1 fusion creating chimeric genes
 - **Conversion hotspot**: Exons 9-11 region is a major recombination site
-- **Clinical interpretation**: Provides Gaucher disease and Parkinson's risk assessment
-
-## Clinical Significance
-
-### Gaucher Disease
-
-Biallelic pathogenic GBA1 variants cause Gaucher disease, a lysosomal storage disorder:
-
-| Type | Characteristics | Common Genotypes |
-|------|----------------|------------------|
-| **Type 1** (non-neuronopathic) | Most common; hepatosplenomegaly, anemia, bone disease | N409S/N409S, L483P/L483P, RecNciI/WT |
-| **Type 2** (acute neuronopathic) | Severe; early-onset neurological involvement | L483P/L483P, c.1263del/c.1263del |
-| **Type 3** (chronic neuronopathic) | Intermediate; later-onset neurological symptoms | Variable genotypes |
-
-### Parkinson's Disease Risk
-
-Heterozygous GBA1 variants (especially gene conversions) are the most common genetic risk factor for Parkinson's disease:
-- **5-10 fold** increased lifetime risk for Parkinson's
-- **RecNciI** and **RecTL** conversion alleles are particularly strong risk factors
-- **~15-30%** of pathogenic GBA1 variants in Ashkenazi Jewish populations are gene conversions
-- **~5-10%** in other populations
-
-### GBAP1 Copy Number
-
-- **Heterozygous GBAP1 deletion**: ~20% in some populations (generally benign)
-- **Homozygous GBAP1 deletion**: ~5% (benign)
-- **GBA1 deletions**: Extremely rare (<0.1%), clinically significant when present
 
 ## GBA Gene Cluster Structure
 
@@ -117,6 +90,8 @@ This region is a hotspot for homologous recombination that transfers GBAP1 seque
 **Key distinction from conversions**: Fusion events replace the 3' end of GBA1 with GBAP1 sequence extending to the gene terminus, while gene conversions transfer discrete internal segments.
 
 ## Example Outputs
+
+> **Note**: Clinical significance and interpretation information in the output examples below is for **Educational and Informational purposes only**.
 
 ### Example 1: Gene Conversion (RecTL)
 
@@ -246,7 +221,7 @@ HMM statistical segmentation:
 
 ### 1000 Genomes Validation
 
-Validated against **Tayebi et al. (2025)** findings on 1000 Genomes high-coverage samples:
+Validated against **Tayebi et al. (2025)** findings on 1000 Genomes high-coverage samples. For this validation, we only used Illumina short reads downloaded from s3://human-pangenomics/ or from 1000-genome data repository. 
 
 | Sample | Coverage | Total CN | Detected Event | Complete Genotype | Concordance |
 |--------|----------|----------|----------------|-------------------|-------------|

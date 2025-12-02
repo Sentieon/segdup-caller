@@ -12,32 +12,6 @@ CYP2D6 (cytochrome P450 2D6) is one of the most clinically important pharmacogen
 - **Hybrid allele detection**: Identifies structural variants *13, *36, *68 (non-functional hybrid genes)
 - **Duplication-aware calling**: Handles CYP2D6xN alleles common in some populations (1-5%)
 
-## Clinical Significance
-
-### Drug Metabolism
-
-CYP2D6 metabolizes many clinically important drug classes:
-- **Psychiatry**: Antidepressants (SSRIs, TCAs), antipsychotics (risperidone, aripiprazole)
-- **Pain management**: Codeine, tramadol, oxycodone
-- **Oncology**: Tamoxifen (breast cancer)
-- **Cardiology**: Beta-blockers (metoprolol, carvedilol), antiarrhythmics
-
-### Metabolizer Phenotypes
-
-| Phenotype | Genotype Pattern | Clinical Impact | Examples |
-|-----------|------------------|-----------------|----------|
-| **Ultrarapid (UM)** | Functional allele duplication | Very rapid drug clearance; may need higher doses | *1/*1xN, *2xN/*35 |
-| **Normal (NM)** | Two functional alleles | Standard drug metabolism | *1/*1, *1/*2, *2/*35 |
-| **Intermediate (IM)** | One functional + one reduced/non-functional | Moderately reduced metabolism | *1/*4, *2/*41, *1/*10 |
-| **Poor (PM)** | No functional alleles | Severely impaired clearance; toxicity risk | *4/*4, *5/*5, *4/*13 |
-
-### Clinical Guidelines
-
-Pharmacogenomic dosing guidelines available from:
-- **CPIC** (Clinical Pharmacogenetics Implementation Consortium): codeine, tamoxifen, TCAs, SSRIs
-- **DPWG** (Dutch Pharmacogenetics Working Group): extensive CYP2D6 substrate guidance
-- **FDA**: Tamoxifen, atomoxetine, eliglustat labels include CYP2D6 information
-
 ## CYP2D6 Gene Cluster Structure
 
 ### Genomic Organization
@@ -125,6 +99,8 @@ For CYP2D6xN alleles (CN ≥ 3):
 - Long-read sequencing or targeted methods may be needed for definitive assignment
 
 ## Example Outputs
+
+> **Note**: Clinical significance and interpretation information in the output examples below is for **Educational and Informational purposes only**.
 
 ### Example 1: Simple Heterozygous Deletion (*1/*5)
 
@@ -231,25 +207,6 @@ CYP2D6:
     method: phased_consumption
 ```
 
-## Interpretation Guide
-
-### Common Star Allele Functional Classifications
-
-| Function | Common Alleles | Clinical Guidance |
-|----------|----------------|-------------------|
-| **No Function** | *3, *4, *5, *6, *7, *8, *13, *36, *68 | Avoid codeine (no effect); reduce doses of many substrates |
-| **Reduced** | *9, *10, *17, *29, *41 | Consider dose reduction for narrow therapeutic index drugs |
-| **Normal** | *1, *2, *35 | Standard dosing |
-
-### Phenotype-Based Clinical Guidance
-
-| Phenotype | Codeine | Tamoxifen | SSRIs/TCAs | Beta-blockers |
-|-----------|---------|-----------|------------|---------------|
-| **Ultrarapid (UM)** | Avoid (toxicity risk) | Standard dose | May need higher doses | May need higher doses |
-| **Normal (NM)** | Standard dose | Standard dose | Standard dose | Standard dose |
-| **Intermediate (IM)** | Reduce dose or avoid | Standard dose | Consider dose reduction | Consider dose reduction |
-| **Poor (PM)** | Avoid (no effect) | Consider alternative | Significant dose reduction | Significant dose reduction |
-
 ## Gene-Specific Implementation Details
 
 ### Copy Number Prior
@@ -291,7 +248,6 @@ Specialized HMM transition rates:
 - **Novel variants**: Variants not in PharmVar database will not receive star allele designation
 - **Duplication phasing**: Specific allele-to-copy assignment ambiguous for CN≥3 without long-read data
 - **Rare structural variants**: Some complex SVs may not be fully characterized
-- **Clinical decision-making**: Results should be interpreted with clinical context, drug interactions, patient phenotype
 
 ## CYP2D6-Specific Resources
 

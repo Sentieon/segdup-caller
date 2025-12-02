@@ -2,6 +2,14 @@
 
 **Segdup Gene caller** is a variant caller for genes located in segmental duplication regions that contain highly similar homologs or pseudogenes. It can leverage available long-read sequencing data to improve variant calling accuracy.
 
+## ⚠️ Research Use Only Disclaimer
+
+**THIS TOOL IS FOR RESEARCH USE ONLY AND IS NOT A VALIDATED CLINICAL TEST.**
+
+The Sentieon Segdup Gene Caller has not been validated for clinical diagnostic purposes. Clinical notes and significance information provided in the output YAML files are for **Educational and Informational purposes only** and should not be used as the sole basis for clinical decision-making.
+
+---
+
 Segdup caller currently supports whole-genome sequencing (WGS) paired-end short reads of 150 bp length, such as those from Illumina, Element Biosciences, MGI, and others. Sentieon provides platform-specific short-read variant calling models. For accurate copy number calling and phasing, Segdup caller recommends a minimum of 20× coverage, with 30× being ideal.
 
 Segdup caller supports additional long-read data from **PacBio HiFi** or **Oxford Nanopore**, aligned BAM files, using the corresponding Sentieon models.
@@ -138,6 +146,8 @@ segdup-caller -s $short_read_bam -r $hg38_REF --sr_model $short_read_model_bundl
 
 Sentieon Segdup caller produces the following output:
 
-- A YAML file containing information of analysis result, including copy number states, gene conversion events if detected, etc. 
+- A YAML file containing information of analysis result, including copy number states, gene conversion events if detected, etc.
 - VCF files containing variant calls for each specified gene region
+
+> **Note**: Clinical significance and interpretation information in the YAML output is for **Educational and Informational purposes only**.
 

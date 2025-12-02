@@ -12,34 +12,6 @@ The HBA gene cluster on chromosome 16p13.3 (chr16:169,454-177,522) contains two 
 - **Large deletion detection**: Detects --SEA, --MED, --FIL, --THAI deletions via non-duplication region
 - **Clinical phenotype prediction**: Maps genotype to α-thalassemia clinical severity
 
-## Clinical Significance
-
-### Alpha-Thalassemia Phenotypes
-
-Alpha-thalassemia results from reduced/absent alpha-globin chain production:
-
-| Genotype | α-Globin Genes | Clinical Phenotype | Severity |
-|----------|----------------|-------------------|----------|
-| **αα/αα** | 4 functional | Normal | None |
-| **αα/α-** or **αα/--** | 3 functional | Silent carrier | Asymptomatic |
-| **α-/α-** or **αα/--** | 2 functional | Alpha-thalassemia trait | Mild microcytic anemia |
-| **α-/--** | 1 functional | Hemoglobin H disease | Moderate to severe anemia |
-| **--/--** | 0 functional | Hemoglobin Bart's hydrops fetalis | Lethal in utero/shortly after birth |
-
-### Common Deletion Types
-
-**Small deletions** (~90% of cases):
-- **-α3.7** (rightward deletion): 10-30% heterozygous frequency (ethnicity-dependent)
-- **-α4.2** (leftward deletion): 1-5% heterozygous frequency
-
-**Large deletions** (~10% of cases):
-- **--SEA** (Southeast Asian): Most common large deletion
-- **--MED** (Mediterranean): Common in Mediterranean populations
-- **--FIL** (Filipino): Common in Filipino populations
-- **--THAI** (Thai): Common in Thai populations
-
-These large deletions remove the entire alpha-globin gene cluster.
-
 ## HBA Gene Cluster Structure
 
 ### Genomic Organization
@@ -61,17 +33,11 @@ The HBA caller analyzes three copy number regions:
 
 Each gene exists in highly homologous duplication regions that facilitate unequal crossing-over during meiosis, leading to recurrent deletions.
 
-### Deletion Mechanisms
+### Common Deletion Types
 
-**-α3.7 deletion**:
-- **Mechanism**: Unequal crossing-over between misaligned Z boxes
-- **Result**: 3.7 kb rightward deletion creating functional α2α1 fusion gene
-- **Effect**: Removes one alpha-globin gene (4 genes → 3 genes)
-
-**-α4.2 deletion**:
-- **Mechanism**: Recombination between X boxes
-- **Result**: 4.2 kb leftward deletion removing HBA2 gene
-- **Effect**: Removes one alpha-globin gene (4 genes → 3 genes)
+**Small deletions** (~90% of cases):
+- **-α3.7**: 3.7 kb rightward deletion creating functional α2α1 fusion gene. 10-30% heterozygous frequency (ethnicity-dependent)
+- **-α4.2**  4.2 kb leftward deletion removing HBA2 gene. 1-5% heterozygous frequency
 
 **Large deletions** (--SEA, --MED, --FIL, --THAI):
 - **Mechanism**: Large chromosomal deletions (>20 kb)
@@ -79,6 +45,8 @@ Each gene exists in highly homologous duplication regions that facilitate unequa
 - **Effect**: Removes both alpha-globin genes (4 genes → 2 genes when heterozygous)
 
 ## Example Outputs
+
+> **Note**: Clinical significance and interpretation information in the output examples below is for **Educational and Informational purposes only**.
 
 ### Example 1: Heterozygous -α3.7 Deletion (Silent Carrier)
 
@@ -189,7 +157,7 @@ The caller determines CN state (0, 1, 2, 3, 4) for each of the three regions usi
 
 ### HPRC v2.0 Benchmark
 
-Validated on **215 diverse samples** from HPRC v2.0 with truth CN calls derived from assemblies:
+Validated on **215 diverse samples** from HPRC v2.0 with truth CN calls derived from assemblies. For this validation, we only used Illumina short reads downloaded from s3://human-pangenomics/
 
 | Metric | Value |
 |--------|-------|
