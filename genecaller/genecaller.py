@@ -259,6 +259,13 @@ class GeneCaller:
             help="Number of parallel threads for gene processing (default: number of CPU count)",
         )
         parser.add_argument(
+            "--workers",
+            "-w",
+            type=int,
+            default=4,
+            help="Number of genes processed concurrently (default: 4)",
+        )
+        parser.add_argument(
             "--log_level",
             choices=["DEBUG", "INFO", "WARNING", "ERROR"],
             default="INFO",
@@ -359,6 +366,7 @@ class GeneCaller:
                 "keep_tmp": args.keep_temp,
                 "log_level": args.log_level,
                 "threads": args.threads,
+                "workers": args.workers,
             }
         )
         self.args = args
@@ -451,7 +459,7 @@ class GeneCaller:
             gene_tasks.append(gene_task)
 
         results = {}
-        max_workers = min(self.params["threads"], len(self.genes))
+        max_workers = min(self.params["workers"], len(self.genes))
 
         if max_workers > 1:
             # Use a process pool for parallel processing
@@ -497,9 +505,9 @@ class GeneCaller:
         t0 = time.time()
         start_datetime = datetime.now()
 
-        if len(self.genes) > 1 and self.params["threads"] > 1:
+        if len(self.genes) > 1 and self.params["threads"] * self.params["workers"] > 1:
             logger.info(
-                f"Processing {len(self.genes)} genes in parallel using {self.params['threads']} threads"
+                f"Processing {len(self.genes)} genes in parallel using {self.params['workers']} workers and {self.params['threads']} threads"
             )
         result = self.process_genes()
 

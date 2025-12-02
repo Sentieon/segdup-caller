@@ -118,6 +118,9 @@ Targeted variant caller for genes with highly similar paralogs.
                             Number of parallel threads for gene processing
                             (default: number of available CPU cores)
 
+  --workers WORKERS, -w WORKERS
+                            Number of genes processed concurrently (default: 4)
+
   --version                 Show program's version number and exit
 
   --keep_temp               Keep temporary files for debugging
@@ -132,12 +135,21 @@ segdup-caller --version
 
 **Calling all genes with a short-read input BAM:**
 ```bash
-segdup-caller -s $short_read_bam -r $hg38_REF --sr_model $short_read_model_bundle -o $outdir 
+segdup-caller -s $short_read_bam -r $hg38_REF --sr_model $short_read_model_bundle -o $outdir
 ```
 
 **Calling SMN1/SMN2 and CYP2D6 with a short-read input BAM:**
 ```bash
-segdup-caller -s $short_read_bam -r $hg38_REF --sr_model $short_read_model_bundle -g SMN1,CYP2D6 -o $outdir 
+segdup-caller -s $short_read_bam -r $hg38_REF --sr_model $short_read_model_bundle -g SMN1,CYP2D6 -o $outdir
+```
+
+**Controlling parallelization with --workers and --threads:**
+```bash
+# Process 2 genes concurrently, each using up to 16 threads
+segdup-caller -s $short_read_bam -r $hg38_REF --sr_model $short_read_model_bundle -o $outdir --workers 2 --threads 16
+
+# Process 8 genes concurrently, each using up to 4 threads
+segdup-caller -s $short_read_bam -r $hg38_REF --sr_model $short_read_model_bundle -o $outdir --workers 8 --threads 4
 ```
 
 ---
