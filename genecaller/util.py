@@ -473,46 +473,349 @@ class Reference(object):
         return iter(self.index.items())
 
 
-Mapping = collections.namedtuple("Mapping", "pos, m_pos, ref, m_ref")
+TRANS_TABLE = str.maketrans("ACGTacgtNn", "TGCAtgcaNn")
+
+
+def rc(seq: str) -> str:
+    return seq.translate(TRANS_TABLE)[::-1]
+
+
+def complement(seq: str) -> str:
+    return seq.translate(TRANS_TABLE)
+
+
+MappingBlock = collections.namedtuple("MappingBlock", "s1, e1, s2, e2, r1, r2")
+
+
+class HeapItem:
+    __slots__ = ("start", "end", "is_variant", "data", "uid")
+
+    def __init__(self, s, e, is_v, d, u):
+        self.start, self.end, self.is_variant, self.data, self.uid = s, e, is_v, d, u
+
+    def __lt__(self, o):
+        if self.start != o.start:
+            return self.start < o.start
+        if self.is_variant != o.is_variant:
+            return not self.is_variant
+        if self.end != o.end:
+            return self.end < o.end
+        return self.uid < o.uid
 
 
 class GeneMapping:
-    def __init__(self, mapping_file: str, combine: bool = False) -> None:
-        self.g1tog2 = {}
-        self.g2tog1 = {}
-        self.map12 = []
-        self.map21 = []
-        self.reverse = False
+    def __init__(
+        self, mapping_file: str, combine: bool = False, ref_genome: Optional[Any] = None
+    ) -> None:
+        self.intervals1, self.intervals2 = [], []
+        self.reverse, self.ref_genome = False, ref_genome
+        self.g1tog2, self.g2tog1 = {}, {}
+
         with gzip.open(mapping_file, "rt") as f:
+            init_s2 = 0
             for line in f:
-                fields = line.strip().split("\t")
-                if len(fields) < 8:
+                flds = line.strip().split("\t")
+                if len(flds) < 8:
                     continue
-                c1, c2, r1, r2, s1, e1, s2, e2 = (
-                    [int(s) - 1 for s in fields[:2]]
-                    + fields[2:4]
-                    + [int(s) - 1 for s in fields[4:]]
-                )
-                self.reverse = e2 < s2  # type: ignore
+                c1, c2 = map(int, flds[:2])
+                r1, r2 = flds[2:4]
+                s1, e1, s2, e2 = map(int, flds[4:])
+
+                if not init_s2:
+                    init_s2 = s2
+                elif init_s2 > 0:
+                    self.reverse = s2 < init_s2
+                    init_s2 = -1
                 if c1 == s1 and c2 == s2:
-                    if self.reverse:
-                        s2 = e2 + 1  # type: ignore
-                    self.map12.append(Mapping(s1, s2, r1, r2))
-                    self.map21.append(Mapping(s2, s1, r2, r1))
-                    if combine:
-                        self.map21.append(Mapping(s1, s2, r1, r2))
-                        self.map12.append(Mapping(s2, s1, r2, r1))
+                    blk = MappingBlock(s1, e1, s2, e2, r1, r2)
+                    self.intervals1.append(blk)
+                    self.intervals2.append(blk)
                 self.g1tog2[c1] = c2
                 self.g2tog1[c2] = c1
                 if combine:
-                    self.g1tog2[c2] = c1
-                    self.g2tog1[c1] = c2
-        self.map21 = sorted(self.map21)
+                    self.g1tog2[c1] = c2
+                    self.g2tog1[c2] = c1
 
-    @staticmethod
-    def rc(seq: str) -> str:
-        rev = {"A": "T", "C": "G", "T": "A", "G": "C"}
-        return "".join([rev[s] for s in seq[-1::-1]])
+        self.intervals1.sort(key=lambda x: x.s1)
+        self.keys1 = [x.s1 for x in self.intervals1]
+        self.intervals2.sort(key=lambda x: x.s2)
+        self.keys2 = [x.s2 for x in self.intervals2]
+
+    def convert21(
+        self,
+        variants: List[Any],
+        ref_diff: bool = True,
+        annotate_fn: Optional[Callable] = None,
+    ):
+        return self.convert_vars(variants, True, ref_diff, annotate_fn)
+
+    def convert12(
+        self,
+        variants: List[Any],
+        ref_diff: bool = True,
+        annotate_fn: Optional[Callable] = None,
+    ):
+        return self.convert_vars(variants, False, ref_diff, annotate_fn)
+
+    def convert_vars(
+        self,
+        variants: List[Any],
+        to_gene1: bool,
+        ref_diff: bool,
+        annotate_fn: Optional[Callable] = None,
+    ):
+        blocks, use_s2 = (
+            (self.intervals2, True) if to_gene1 else (self.intervals1, False)
+        )
+        pq, uid = [], 0
+        cn = 2
+        if variants:
+            cn = len(re.split(r"\||/", variants[0].samples[0]["GT"]))
+            chr = variants[0].chrom
+
+        for v in variants:
+            heapq.heappush(pq, HeapItem(v.pos, v.pos + len(v.ref), True, v, uid))
+            uid += 1
+
+        if ref_diff:
+            for b in blocks:
+                if b.r1 != b.r2:
+                    s, e = (b.s2, b.e2) if use_s2 else (b.s1, b.e1)
+                    heapq.heappush(pq, HeapItem(s, e, False, b, uid))
+                    uid += 1
+
+        proc, max_end = [], -1
+        while pq:
+            item = heapq.heappop(pq)
+            if proc and item.start >= max_end:
+                yield from self._process_block(
+                    proc, to_gene1, ref_diff, annotate_fn, (cn, chr)
+                )
+                proc, max_end = [], -1
+            proc.append(item)
+            max_end = max(max_end, item.end)
+
+        if proc:
+            yield from self._process_block(
+                proc, to_gene1, ref_diff, annotate_fn, (cn, chr)
+            )
+
+    def _process_block(
+        self,
+        items: List[HeapItem],
+        to_g1: bool,
+        rd: bool,
+        ann: Optional[Callable],
+        params: Any,
+    ):
+        cn, chr = params
+        vars_in = [x.data for x in items if x.is_variant]
+        if not vars_in:
+            if not rd:
+                return
+            elif to_g1:  # all ref-diff variants can be output as is
+                for v in items:
+                    var = self._mk_var(
+                        chr, v.data.s1, v.data.r1, [v.data.r2], None, [1] * cn
+                    )
+                    yield ann(var) if ann else var
+                return
+
+        min_s, max_e = min(x.start for x in items), max(x.end for x in items)
+        intervals, keys = (
+            (self.intervals2, self.keys2) if to_g1 else (self.intervals1, self.keys1)
+        )
+        if not to_g1 and self.reverse:
+            max_e += 1
+        bg = self._get_bg(min_s, max_e, intervals, keys, to_g1)
+        if not bg:
+            return
+
+        sb_s = (
+            min(bg, key=lambda b: b.s2).s2 if to_g1 else min(bg, key=lambda b: b.s1).s1
+        )
+        r2_seq = "".join(b.r2 for b in bg)
+        r1_seq = "".join(b.r1 for b in bg)
+        in_ctx, tgt_ctx = (r2_seq, r1_seq) if to_g1 else (r1_seq, r2_seq)
+        if self.reverse and to_g1:
+            in_ctx = rc(in_ctx)  # ref with diff variants
+        if self.reverse and not to_g1:
+            tgt_ctx = rc(tgt_ctx)
+        src_v = None
+        var_types = []
+        alleles_pos = []
+        for _ in range(cn):
+            alleles_pos.append({p: b for p, b in enumerate(in_ctx, sb_s)})
+            var_types.append([])
+        stars = []
+        if vars_in:
+            vars_in.sort(key=lambda v: v.pos)
+            src_v = vars_in[-1]
+            for v in vars_in:
+                gt = list(map(int, re.split(r"\||/", v.samples[0]["GT"])))
+                for i, g in enumerate(gt):
+                    if not g:  # reference allele
+                        continue
+                    a = v.alt[g - 1]
+                    if a == "*":
+                        stars.append(i)
+                        continue
+                    if len(a) == len(v.ref):  # snp
+                        for ii, aa in enumerate(a):
+                            if v.pos + ii in alleles_pos[i]:
+                                alleles_pos[i][v.pos + ii] = aa
+                    elif len(a) > len(v.ref):  # ins
+                        if v.pos in alleles_pos[i]:
+                            alleles_pos[i][v.pos] += a[1:]
+                    else:  # del. remove everything after the first base
+                        for ii in range(1, len(v.ref)):
+                            if v.pos + ii in alleles_pos[i]:
+                                del alleles_pos[i][v.pos + ii]
+        final_in = ["".join([ap[k] for k in sorted(ap.keys())]) for ap in alleles_pos]
+        lifted = [rc(s) if self.reverse else s for s in final_in]
+        new_ref = tgt_ctx
+        new_alts = list(set([a for a in lifted if a != new_ref]))
+        if not new_alts:
+            return
+        gt = []
+        for seq in lifted:
+            if seq == new_ref:
+                gt.append(0)
+            else:
+                gt.append(new_alts.index(seq) + 1)
+
+        fin_ref, fin_alts = new_ref, new_alts
+        if to_g1:
+            t_pos = min(bg, key=lambda b: b.s1).s1
+        else:
+            t_pos = min(bg, key=lambda b: b.s2).s2
+
+        while True:
+            op = False
+            # decompose multiple snps in a row
+            if (
+                max([len(a) for a in fin_alts])
+                == min([len(a) for a in fin_alts])
+                == len(fin_ref)
+            ):
+                if len(fin_ref) > 1:
+                    for k, r in enumerate(fin_ref):
+                        all_alts = [a[k] for a in fin_alts]
+                        if any([r != a for a in all_alts]):
+                            v = self._mk_var(chr, t_pos + k, r, all_alts, src_v, gt)
+                            yield ann(v) if ann else v
+                    return
+            elif any(
+                [a[0] != fin_ref[0] for a in fin_alts]
+            ):  # add anchor base for INDEL
+                t_pos -= 1
+                if t_pos in self.keys1:
+                    anc = self.intervals1[self.keys1.index(t_pos)].r1
+                elif self.ref_genome:
+                    anc = self.ref_genome.get(chr, t_pos, t_pos + 1)[0]
+                else:
+                    raise Exception(
+                        f"Failed to get anchor base for indel at {chr}:{t_pos}"
+                    )
+                fin_alts = [anc + a for a in fin_alts]
+                fin_ref = anc + fin_ref
+                op = True
+
+            # remove trailing bases
+            while (
+                len(fin_ref) > 1
+                and all(len(a) > 1 for a in fin_alts)
+                and all(a[-1] == fin_ref[-1] for a in fin_alts)
+            ):
+                fin_ref = fin_ref[:-1]
+                fin_alts = [a[:-1] for a in fin_alts]
+                op = True
+
+            # remove leading bases
+            while (
+                len(fin_ref) > 1
+                and all(len(a) > 1 for a in fin_alts)
+                and all(a[:2] == fin_ref[:2] for a in fin_alts)
+            ):
+                fin_ref = fin_ref[1:]
+                fin_alts = [a[1:] for a in fin_alts]
+                t_pos += 1
+                op = True
+
+            # Remove trailing SNPs
+            while (
+                all([fin_ref[0] == a[0] for a in fin_alts])
+                and len(fin_ref) > 1
+                and min([len(a) for a in fin_alts]) > 1
+            ):
+                v = self._mk_var(
+                    chr,
+                    t_pos + len(fin_ref) - 1,
+                    fin_ref[-1],
+                    [a[-1] for a in fin_alts],
+                    src_v,
+                    gt,
+                )
+                yield ann(v) if ann else v
+                fin_ref = fin_ref[:-1]
+                fin_alts = [a[:-1] for a in fin_alts]
+
+            if not op:
+                break
+
+        if len(fin_ref) == 0 and all(len(a) == 0 for a in fin_alts):
+            return
+
+        if self.ref_genome and (
+            len(fin_ref) == 0 or any(len(a) == 0 for a in fin_alts)
+        ):
+            anc = self.ref_genome.get(chr, t_pos - 1, t_pos)
+            fin_ref = anc + fin_ref
+            fin_alts = [anc + a for a in fin_alts]
+            t_pos -= 1
+
+        if stars:
+            stars = set(stars)
+            for star in stars:
+                if gt[star] == 0:
+                    new_alts.append("*")
+                    gt[star] = len(new_alts)
+                else:
+                    new_alts[gt[star] - 1] = "*"
+                if len(new_alts) == 1:
+                    return
+
+        v = self._mk_var(chr, t_pos, fin_ref, fin_alts, src_v, gt)
+        yield ann(v) if ann else v
+
+    def _mk_var(self, c, p, r, a, src, gt):
+        if src:
+            nv = copy.deepcopy(src)
+            nv.chrom, nv.pos, nv.id, nv.ref, nv.alt = c, p, ".", r, a
+            nv.end = p + len(r)
+            if len(gt) > 1:
+                nv.samples[0]["GT"] = nv.samples[0]["GT"][1].join(map(str, gt))
+            else:
+                nv.samples[0]["GT"] = str(gt[0])
+            nv.line = None
+            return nv
+        else:
+            s = [{"GT": "|".join(map(str, gt))}]
+            return vcflib.Variant(c, p, ".", r, a, None, [], {}, s, p + len(r), None)
+
+    def _get_bg(self, s, e, ints, keys, use_s2):
+        idx = bisect.bisect_right(keys, s) - 1
+        idx = 0 if idx < 0 else idx
+        res = []
+        for i in range(idx, len(ints)):
+            b = ints[i]
+            bs, be = (b.s2, b.e2) if use_s2 else (b.s1, b.e1)
+            if bs >= e:
+                break
+            if be > s and bs < e:
+                res.append(b)
+        res.sort(key=lambda x: x.s1)  # sorted in the original
+        return res
 
     def get(self, s, direction="auto"):
         if direction == "forward":
@@ -537,17 +840,19 @@ class GeneMapping:
     def interval(self, region: str, direction="auto") -> str:
         if not region:
             return ""
-        func = lambda s: self.get(s, direction)
+
+        def _func(s):
+            return self.get(s, direction)
 
         out_regions = []
         for chr, regions in IntervalList.parse_region(region).items():
             for s, e in regions:
-                s1, e1, m1 = func(s), func(e - 1), func((s + e) // 2)
+                s1, e1, m1 = _func(s), _func(e - 1), _func((s + e) // 2)
                 if self.reverse and s1 < m1 or not self.reverse and s1 > m1:
                     n, ss = 0, s
                     while True:
                         n, ss = n + 1, ss + 1
-                        ss1 = func(ss)
+                        ss1 = _func(ss)
                         if self.reverse and ss1 >= m1 or not self.reverse and ss1 <= m1:
                             s1 = ss1 + n if self.reverse else ss1 - n
                             break
@@ -555,7 +860,7 @@ class GeneMapping:
                     n, ee = 0, e
                     while True:
                         n, ee = n + 1, ee - 1
-                        ee1 = func(ee)
+                        ee1 = _func(ee)
                         if self.reverse and ee1 <= m1 or not self.reverse and ee1 >= m1:
                             e1 = ee1 - n if self.reverse else ee1 + n
                             break
@@ -569,265 +874,6 @@ class GeneMapping:
 
     def interval21(self, region: str) -> str:
         return self.interval(region, "backward")
-
-    def convert_vars(
-        self,
-        v1s: List[Any],
-        direction: str,
-        ref_diff: bool = True,
-        annotate_fn: Optional[Callable] = None,
-    ) -> Any:
-        if direction == "forward":
-            yield from self.convert12(v1s, ref_diff, annotate_fn)
-        elif direction == "backward":
-            yield from self.convert21(v1s, ref_diff, annotate_fn)
-        else:
-            raise ValueError("No auto conversion direction is available")
-
-    def convert12(
-        self,
-        v1s: List[Any],
-        ref_diff: bool = True,
-        annotate_fn: Optional[Callable] = None,
-    ) -> Any:
-        def _pop():
-            pos, i, v = heapq.heappop(vars)
-            vv = next(iters[i], None)
-            if vv:
-                heapq.heappush(vars, (vv.pos, i, vv))
-            return pos, i, v
-
-        if not v1s:
-            return
-        cn = len(re.split(r"\||/", v1s[0].samples[0]["GT"]))
-        chr = v1s[0].chrom
-        vars = []
-        iters = [iter(v1s), iter(self.map12)]
-        for i, it in enumerate(iters):
-            v = next(it, None)
-            if v:
-                heapq.heappush(vars, (v.pos, i, v))
-        while vars:
-            to_proc = []
-            last_loc = 0, 0
-            while vars:
-                pos, i, v = _pop()
-                if v.pos in self.g2tog1:
-                    yield v
-                    continue
-                if last_loc[0] and (v.pos >= last_loc[1] or v.pos < last_loc[0]):
-                    heapq.heappush(vars, (pos, i, v))
-                    break
-                to_proc.append((i, v))
-                last_loc = min(v.pos, last_loc[0]), max(last_loc[1], v.pos + len(v.ref))
-            if len(to_proc) == 1 and to_proc[0][0] == 1:
-                # if this is a diff site
-                v = to_proc[0][1]
-                if ref_diff and v.ref != v.m_ref:
-                    v = (
-                        chr,
-                        v.m_pos,
-                        "",
-                        v.m_ref,
-                        [v.ref],
-                        None,
-                        [],
-                        {},
-                        [{"GT": "/".join(["1"] * cn)}],
-                        v.m_pos + len(v.m_ref),
-                        None,
-                    )
-                    yield (
-                        annotate_fn(vcflib.Variant(*v))
-                        if annotate_fn
-                        else vcflib.Variant(*v)
-                    )
-            else:
-                mm = [v for i, v in to_proc if i == 1]
-                if not mm:
-                    if to_proc:
-                        variant_pos = to_proc[0][1].pos
-                        logger.warning(f"variant {variant_pos} cannot be matched")
-                    continue
-                r1 = "".join([m.ref for m in mm])
-                r2 = "".join([m.m_ref for m in mm])
-                pos = mm[0].pos
-                init_pos = pos
-                alleles = [""] * cn
-                vv = [v for i, v in to_proc if i == 0]
-                if not vv:
-                    continue
-                star = set()
-                for v in vv:
-                    gt = [int(g) for g in re.split(r"\||/", v.samples[0]["GT"])]
-                    if "*" in v.alt:
-                        star_idx = v.alt.index("*") + 1
-                        star = star.union(
-                            set([i for i, g in enumerate(gt) if g == star_idx])
-                        )
-                    if v.pos > pos:
-                        alleles = [
-                            a + r1[pos - init_pos : v.pos - init_pos] for a in alleles
-                        ]
-                    for i, g in enumerate(gt):
-                        if g == 0:
-                            alleles[i] += v.ref
-                        else:
-                            alleles[i] += v.alt[g - 1]
-                    pos = v.pos + len(v.ref)
-                if pos != mm[-1].pos + len(mm[-1].ref):
-                    alleles = [a + r1[pos - init_pos :] for a in alleles]
-                for i in star:
-                    alleles[i] = "*"
-                alts = list(set([a for a in alleles if a != r2]))
-                if not alts:
-                    continue
-                gt = ["0" if a == r2 else str(alts.index(a) + 1) for a in alleles]
-                v = copy.deepcopy(vv[0])
-                v.pos = mm[0].m_pos
-                min_len = min([len(a) for a in [r2] + alts if a != "*"])
-                for i in range(min_len - 1):
-                    last = set([a[-1] for a in [r2] + alts if a != "*"])
-                    if len(last) == 1:  # trim the last bit
-                        r2 = r2[:-1]
-                        alts = [a[:-1] if a != "*" else a for a in alts]
-                    else:
-                        break
-                min_len = min([len(a) for a in [r2] + alts if a != "*"])
-                for i in range(min_len - 1):
-                    first = set([a[0] for a in [r2] + alts if a != "*"])
-                    if len(first) == 1:  # trim the last bit
-                        r2 = r2[1:]
-                        alts = [a[1:] if a != "*" else a for a in alts]
-                        v.pos += 1
-                    else:
-                        break
-                v.ref = r2
-                v.alt = alts
-                sep = "/" if "/" in v.samples[0]["GT"] else "|"
-                v.samples[0]["GT"] = sep.join(gt)
-                v.line = None
-                yield annotate_fn(v) if annotate_fn else v
-
-    def convert21(
-        self,
-        v1s: List[Any],
-        ref_diff: bool = True,
-        annotate_fn: Optional[Callable] = None,
-    ) -> Any:
-        def _pop():
-            pos, i, v = heapq.heappop(vars)
-            vv = next(iters[i], None)
-            if vv:
-                heapq.heappush(vars, (vv.pos, i, vv))
-            return pos, i, v
-
-        if not v1s:
-            return
-        cn = len(re.split(r"\||/", v1s[0].samples[0]["GT"]))
-        chr = v1s[0].chrom
-        vars = []
-        iters = [iter(v1s), iter(self.map21)]
-        for i, it in enumerate(iters):
-            v = next(it, None)
-            if v:
-                heapq.heappush(vars, (v.pos, i, v))
-        while vars:
-            to_proc = []
-            last_end = 0
-            while vars:
-                pos, i, v = _pop()
-                if v.pos in self.g1tog2:
-                    yield v
-                    continue
-                if last_end and v.pos >= last_end:
-                    heapq.heappush(vars, (pos, i, v))
-                    break
-                to_proc.append((i, v))
-                last_end = max(last_end, v.pos + len(v.ref))
-            if len(to_proc) == 1 and to_proc[0][0] == 1:
-                # if this is a diff site
-                v = to_proc[0][1]
-                if ref_diff and v.ref != v.m_ref:
-                    v = (
-                        chr,
-                        v.m_pos,
-                        "",
-                        v.m_ref,
-                        [v.ref],
-                        None,
-                        [],
-                        {},
-                        [{"GT": "/".join(["1"] * cn)}],
-                        v.m_pos + len(v.m_ref),
-                        None,
-                    )
-                    yield (
-                        annotate_fn(vcflib.Variant(*v))
-                        if annotate_fn
-                        else vcflib.Variant(*v)
-                    )
-            else:
-                mm = [v for i, v in to_proc if i == 1]
-                r1 = "".join([m.ref for m in mm])
-                r2 = "".join([m.m_ref for m in mm])
-                pos = mm[0].pos
-                init_pos = pos
-                alleles = [""] * cn
-                vv = [v for i, v in to_proc if i == 0]
-                star = set()
-                for v in vv:
-                    gt = [int(g) for g in re.split(r"\||/", v.samples[0]["GT"])]
-                    if "*" in v.alt:
-                        star_idx = v.alt.index("*") + 1
-                        star = star.union(
-                            set([i for i, g in enumerate(gt) if g == star_idx])
-                        )
-                    if v.pos > pos:
-                        alleles = [
-                            a + r1[pos - init_pos : v.pos - init_pos] for a in alleles
-                        ]
-                    for i, g in enumerate(gt):
-                        if g == 0:
-                            alleles[i] += v.ref
-                        else:
-                            alleles[i] += v.alt[g - 1]
-                    pos = v.pos + len(v.ref)
-                if pos != mm[-1].pos + len(mm[-1].ref):
-                    alleles = [a + r1[pos - init_pos :] for a in alleles]
-                for i in star:
-                    alleles[i] = "*"
-                alts = list(set([a for a in alleles if a != r2 and a != "*"]))
-                if star:
-                    alts.append("*")
-                if not alts:
-                    continue
-                gt = ["0" if a == r2 else str(alts.index(a) + 1) for a in alleles]
-                v = copy.deepcopy(vv[0])
-                v.pos = mm[0].m_pos
-                min_len = min([len(a) for a in [r2] + alts if a != "*"])
-                for i in range(min_len - 1):
-                    last = set([a[-1] for a in [r2] + alts if a != "*"])
-                    if len(last) == 1:  # trim the last bit
-                        r2 = r2[:-1]
-                        alts = [a[:-1] if a != "*" else a for a in alts]
-                    else:
-                        break
-                min_len = min([len(a) for a in [r2] + alts if a != "*"])
-                for i in range(min_len - 1):
-                    first = set([a[0] for a in [r2] + alts if a != "*"])
-                    if len(first) == 1:  # trim the last bit
-                        r2 = r2[1:]
-                        alts = [a[1:] if a != "*" else a for a in alts]
-                        v.pos += 1
-                    else:
-                        break
-                v.ref = r2
-                v.alt = alts
-                sep = "/" if "/" in v.samples[0]["GT"] else "|"
-                v.samples[0]["GT"] = sep.join(gt)
-                v.line = None
-                yield annotate_fn(v) if annotate_fn else v
 
 
 def load_bam(in_bam: str, in_ref: Optional[str] = None) -> pysam.AlignmentFile:

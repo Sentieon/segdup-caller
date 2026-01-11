@@ -3,7 +3,7 @@ import pysam
 import os
 import subprocess
 import sys
-from .util import IntervalList, get_data_file
+from .util import IntervalList, get_data_file, rc
 from .logging import get_logger
 import heapq
 from collections import namedtuple, Counter
@@ -78,11 +78,6 @@ class Bam:
         self.clipped_bam = None
         self.dp_norm = 1.0
 
-    @staticmethod
-    def rc(seq: str) -> str:
-        rev = {"A": "T", "C": "G", "T": "A", "G": "C", "N": "N"}
-        return "".join([rev[s] for s in seq[-1::-1]])
-
     def call_variant(self, output: str, param: Dict[str, Any]) -> None:
         if self.use_existing and os.path.exists(output) and os.path.getsize(output):
             return
@@ -117,11 +112,13 @@ class Bam:
         cmd = (
             f"{self.sentieon} driver {driver_opt} --algo {algo} {algo_opt} {tmp_output}"
         )
+        self.logger.debug(f"Running command: {cmd}")
         result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
         if result.returncode:
             raise Exception(result.stderr)
         if apply_model:
             cmd = f"{self.sentieon} driver -r {self.ref} --algo DNAModelApply -v {tmp_output} --model {apply_model} {output}"
+            self.logger.debug(f"Running command: {cmd}")
             result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
             if result.returncode:
                 raise Exception(result.stderr)
@@ -143,6 +140,7 @@ class Bam:
         cmd = (
             f"{self.sentieon} driver {driver_opt} --algo Genotyper {algo_opt} {output}"
         )
+        self.logger.debug(f"Running command: {cmd}")
         result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
         if result.returncode:
             raise Exception(result.stderr)
@@ -161,6 +159,7 @@ class Bam:
         else:
             raise Exception("Model is not specified for CNVscope.")
         cmd = f"{self.sentieon} driver {driver_opt} --algo CNVscope {algo_opt} {output}"
+        self.logger.debug(f"Running command: {cmd}")
         result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
         result.check_returncode()
 
@@ -515,6 +514,7 @@ class Bam:
         if self.use_existing and os.path.exists(out_bam) and os.path.getsize(out_bam):
             return results
         cmd = f"{self.sentieon} driver -r {self.ref} -i {self.bam} -i {' -i '.join(liftover_bams)} --interval {gene.chr} --algo ReadWriter {out_bam}"
+        self.logger.debug(f"Running command: {cmd}")
         result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
         result.check_returncode()
         return results
@@ -576,7 +576,7 @@ class Bam:
             if read.is_unmapped:
                 if read.query_sequence:
                     read_seq = (
-                        self.rc(read.query_sequence)
+                        rc(read.query_sequence)
                         if read.is_reverse
                         else read.query_sequence
                     )
@@ -622,9 +622,7 @@ class Bam:
                     continue
                 cur_pos = ref_positions.setdefault(region.split(":")[0], {})
                 read_seq = (
-                    self.rc(read.query_sequence)
-                    if read.is_reverse
-                    else read.query_sequence
+                    rc(read.query_sequence) if read.is_reverse else read.query_sequence
                 )
                 key = read.query_name + read_seq[:20]
                 if key in read_names:
@@ -666,6 +664,7 @@ class Bam:
         base, ext = os.path.splitext(fname)
         self.clipped_bam = f"{self.tmpdir}/{base}.{gene.gene_names[0]}{ext}"
         cmd = f"{self.sentieon} driver -r {self.ref} --interval {interval} --interval_padding 2000 -i {self.bam} --algo ReadWriter {self.clipped_bam}"
+        self.logger.debug(f"Running command: {cmd}")
         result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
         result.check_returncode()
 
@@ -1059,7 +1058,9 @@ class Phased_vcf:
                     if g == 1:
                         all_alleles[i] = all_alleles.get(i, 0) + 1
             elif v.pos in matched:
-                v1, _, vs = matched[v.pos]
+                v1, _, vs, match_gt = matched[v.pos]
+                if not match_gt:
+                    continue
                 gt = list(map(int, re.split(r"\||/", vs.samples[0]["GT"])))
                 for i, g in enumerate(gt):
                     if g == 1:
@@ -1095,6 +1096,28 @@ class Phased_vcf:
             )
             if alt_alleles.difference(gene2_alleles):
                 label.append(self.gene.liftover_region_names[gene_id])
+                # only decompose the liftover variant if it is consistently if total cn != 2
+                if sum(cns) != 2:
+                    m = matched.get(v.pos)
+                    if not m:
+                        continue
+                    v1, v2, _, match_gt = m
+                    if match_gt:
+                        continue
+                    num_v2_alt = (
+                        len(
+                            [
+                                a
+                                for a in re.split(r"\||/", v2.samples[0]["GT"])
+                                if a != "0"
+                            ]
+                        )
+                        if v2
+                        else 0
+                    )
+                    num_g2_alt = len([1 for a in gene2_alleles if a in alt_alleles])
+                    if num_g2_alt != num_v2_alt:
+                        continue
                 v1 = copy.deepcopy(v)
                 v1.samples[0]["GT"] = "|".join(
                     ["1" if a in alt_alleles else "0" for a in gene1_alleles]
@@ -1145,10 +1168,9 @@ class Phased_vcf:
                 summed += v1[0]
             if v2:
                 summed += v2[0]
-            if summed != v[0]:
-                continue
+            match_gt = summed == v[0]
             # all signal in phased comes from v2
-            if not v1:
+            if match_gt and not v1:
                 if not v[1].id or v[1] == "." and len(v[1].ref) == 1:
                     v[1].id = f"{pos}_{v[1].ref}"
                     v[1].line = None
@@ -1156,6 +1178,7 @@ class Phased_vcf:
                 v1[1] if v1 else None,
                 v2[1] if v2 else None,
                 v[1] if v else None,
+                match_gt,
             )
         return keep
 
@@ -1245,7 +1268,11 @@ class Phased_vcf:
             else None
         )
         all_vars = [
-            v for v in vcf if liftover_region and (v.chrom, v.pos) in liftover_region
+            v
+            for v in vcf
+            if liftover_region
+            and (v.chrom, v.pos) in liftover_region
+            and (not v.filter or "." in v.filter or "PASS" in v.filter)
         ]
         all_v1s = []
         all_v2s = []
@@ -1255,7 +1282,7 @@ class Phased_vcf:
                 if (
                     orig_region
                     and (v1.chrom, v1.pos) in orig_region
-                    and (not v1.filter or v1.filter in (".", "PASS"))
+                    and (not v1.filter or "." in v1.filter or "PASS" in v1.filter)
                 ):
                     heapq.heappush(all_v1s, (v1.pos, v1))
         if in_vcf2:
@@ -1265,7 +1292,7 @@ class Phased_vcf:
                 for v2 in vcf2
                 if orig_region2
                 and (v2.chrom, v2.pos) in orig_region2
-                and (not v2.filter or v2.filter in (".", "PASS"))
+                and (not v2.filter or "." in v2.filter or "PASS" in v2.filter)
             ]
             direction = "backward" if gene_id == 0 else "forward"
             for v2 in self.gene.mapping.convert_vars(
@@ -1278,64 +1305,73 @@ class Phased_vcf:
                 "ERROR: exactly two copy numbers required for the gene and its paralog separated by comma. Example: 2,3"
             )
             sys.exit(1)
-        matched = self.match(all_vars, all_v1s, all_v2s)
-        phased = []
-        cur_ps = None
-        out_vars = []
-        out_var1s = []
-        for v1, _, phased_v in matched.values():
-            if v1:
-                heapq.heappush(out_var1s, (v1.pos, 0, v1))
-            heapq.heappush(out_vars, (phased_v.pos, 0, phased_v))
-        for v in all_vars:
-            ps = v.samples[0].get("PS")
-            if ps:
-                if cur_ps and cur_ps != ps:
-                    phased, v1s = self.proc_phased(phased, cns, matched, gene_id)
-                    for vv in phased:
-                        heapq.heappush(out_vars, (vv.pos, 1, vv))
-                    for vv in v1s:
-                        heapq.heappush(out_var1s, (vv.pos, 1, vv))
-                    phased = []
-                phased.append(v)
-                cur_ps = ps
-            else:
-                gts = set(re.split(r"\||/", v.samples[0]["GT"]))
-                if len(gts) == 1 and gts != set("0"):  ## homvar
-                    v1 = self.split_homvar(v, cns)
-                    if v1:
-                        heapq.heappush(out_var1s, (v1.pos, 1, v1))
-                heapq.heappush(out_vars, (v.pos, 1, v))
-        if cur_ps:
-            phased, v1s = self.proc_phased(phased, cns, matched, gene_id)
-            for vv in phased:
-                heapq.heappush(out_vars, (vv.pos, 1, vv))
-            for vv in v1s:
-                heapq.heappush(out_var1s, (vv.pos, 1, vv))
-        for _, v in all_v1s:
-            heapq.heappush(out_var1s, (v.pos, 2, v))
-        out_v1s = []
-        last_pos = None
-        last_i = -1
-        while out_var1s:
-            pos, i, v = heapq.heappop(out_var1s)
-            if region1 and (v.chrom, v.pos) not in region1:
-                continue
-            if last_pos and pos == last_pos and last_i < i:
-                continue
-            last_pos = pos
-            last_i = i
-            out_v1s.append(v)
-        out_liftover = []
-        last_pos = None
-        last_i = -1
-        while out_vars:
-            pos, i, v = heapq.heappop(out_vars)
-            if last_pos and pos == last_pos and last_i < i:
-                continue
-            last_pos = pos
-            last_i = i
-            out_liftover.append(v)
+        if cns[0] == 2:  # called with DNAscope model. trust as is
+            out_v1s = []
+            out_liftover = all_vars
+            while all_v1s:
+                _, v = heapq.heappop(all_v1s)
+                out_v1s.append(v)
+        else:
+            matched = self.match(all_vars, all_v1s, all_v2s)
+            phased = []
+            cur_ps = None
+            out_vars = []
+            out_var1s = []
+            for v1, _, phased_v, match_gt in matched.values():
+                if not match_gt:
+                    continue
+                if v1:
+                    heapq.heappush(out_var1s, (v1.pos, 0, v1))
+                heapq.heappush(out_vars, (phased_v.pos, 0, phased_v))
+            for v in all_vars:
+                ps = v.samples[0].get("PS")
+                if ps:
+                    if cur_ps and cur_ps != ps:
+                        phased, v1s = self.proc_phased(phased, cns, matched, gene_id)
+                        for vv in phased:
+                            heapq.heappush(out_vars, (vv.pos, 1, vv))
+                        for vv in v1s:
+                            heapq.heappush(out_var1s, (vv.pos, 1, vv))
+                        phased = []
+                    phased.append(v)
+                    cur_ps = ps
+                else:
+                    gts = set(re.split(r"\||/", v.samples[0]["GT"]))
+                    if len(gts) == 1 and gts != set("0"):  ## homvar
+                        v1 = self.split_homvar(v, cns)
+                        if v1:
+                            heapq.heappush(out_var1s, (v1.pos, 1, v1))
+                    heapq.heappush(out_vars, (v.pos, 1, v))
+            if cur_ps:
+                phased, v1s = self.proc_phased(phased, cns, matched, gene_id)
+                for vv in phased:
+                    heapq.heappush(out_vars, (vv.pos, 1, vv))
+                for vv in v1s:
+                    heapq.heappush(out_var1s, (vv.pos, 1, vv))
+            for _, v in all_v1s:
+                heapq.heappush(out_var1s, (v.pos, 2, v))
+            out_v1s = []
+            last_pos = None
+            last_i = -1
+            while out_var1s:
+                pos, i, v = heapq.heappop(out_var1s)
+                if region1 and (v.chrom, v.pos) not in region1:
+                    continue
+                if last_pos and pos == last_pos and last_i < i:
+                    continue
+                last_pos = pos
+                last_i = i
+                out_v1s.append(v)
+            out_liftover = []
+            last_pos = None
+            last_i = -1
+            while out_vars:
+                pos, i, v = heapq.heappop(out_vars)
+                if last_pos and pos == last_pos and last_i < i:
+                    continue
+                last_pos = pos
+                last_i = i
+                out_liftover.append(v)
         diff = params["cn_diff"]
         if diff < 0:
             diff = abs(diff)

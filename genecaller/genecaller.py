@@ -116,6 +116,7 @@ def _init_read_data(input_files, ref, params, gene_name) -> dict:
     sr_params["prefix"] = (
         f"{params['tmpdir']}/{params['sample_name']}.{gene_name}.{params['sr_prefix']}"
     )
+    sr_params["model"] = params["sr_model"]
     short_bam = Bam(short, ref, sr_params)
     read_data = {"short_read": {"bam": short_bam, "params": sr_params}}
     if long:
@@ -124,6 +125,8 @@ def _init_read_data(input_files, ref, params, gene_name) -> dict:
         lr_params["prefix"] = (
             f"{params['tmpdir']}/{params['sample_name']}.{gene_name}.{params['lr_prefix']}"
         )
+        if "lr_model" in params:
+            lr_params["model"] = params["lr_model"]
         long_bam = Bam(long, ref, lr_params)
         read_data["long_read"] = {"bam": long_bam, "params": lr_params}
     return read_data
@@ -195,7 +198,13 @@ class GeneCaller:
         logger.info(
             f" * Genes: {' '.join([g.gene_names[0] for g in self.genes if g != 'main'])}"
         )
+        logger.info(f" * short read model: {self.params['sr_model']}")
+        if self.params.get("lr_model", None):
+            logger.info(f" * long read model: {self.params['lr_model']}")
         logger.info(f" * Parallel threads: {self.params['threads']}")
+        logger.info(f" * Parallel workers: {self.params['workers']}")
+        logger.info(f" * Output directory: {self.params['outdir']}")
+        logger.info(f" * Sample name: {self.params['sample_name']}")
 
     def load_params(self) -> None:
         default_cfg_fname = get_data_file("genes.yaml")
@@ -319,9 +328,9 @@ class GeneCaller:
             Gene.conversion_db = get_data_file(conversion_db_path)  # type: ignore
 
         # Instantiate genes using gene-specific classes if available
-        self.genes = [get_gene_class(g)(config[g]) for g in genes]
         self.input = args.short, args.long
         self.ref = args.reference
+        self.genes = [get_gene_class(g)(config[g], self.ref) for g in genes]
 
         if args.threads > cpu_count():
             logger.warning(

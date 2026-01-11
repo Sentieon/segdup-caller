@@ -1,4 +1,4 @@
-from .util import IntervalList, GeneMapping, get_data_file
+from .util import IntervalList, GeneMapping, get_data_file, Reference
 from .logging import get_logger
 from .gene_model import create_gene_priors, GenePriors, GeneConversionSegment
 from .conversion_detector import GeneConversionDetector
@@ -285,8 +285,9 @@ class Gene:
     _priors: Optional[GenePriors] = None  # GenePriors instance for CN prior calculation
     converted_segments: List[GeneConversionSegment] = []
 
-    def __init__(self, cfg: dict) -> None:
+    def __init__(self, cfg: dict, ref_file: str) -> None:
         self.config = cfg.get("config", {})
+        self.ref = Reference(ref_file)
         self.gene_strand = cfg["gene_strand"]
         self.gene_names = cfg["gene_names"]
         self.gene_regions = cfg["gene_regions"]
@@ -297,7 +298,7 @@ class Gene:
         assert all(self.diff_vcf)
         mapping_file = get_data_file(cfg["map"])
         assert mapping_file is not None, f"Mapping file not found: {cfg['map']}"
-        self.mapping = GeneMapping(mapping_file)  # , False)
+        self.mapping = GeneMapping(mapping_file, ref_genome=self.ref)
         if "liftover_regions" in cfg:
             self.liftover_region_names = []
             self.liftover_target_regions = []
@@ -1278,7 +1279,7 @@ class Gene:
                         if orig_fname:
                             orig_vcf = vcflib.VCF(orig_fname)
                             orig_vars = [
-                                v for v in orig_vcf if (v.chrom, v.pos) in region_itv
+                                v for v in orig_vcf if (v.chrom, v.pos) in region_itv and 'MLrejected' not in v.filter
                             ]
                             orig_vcf.close()
                         else:
@@ -1312,7 +1313,7 @@ class Gene:
                     if lift_fname:
                         lift_vcf = vcflib.VCF(lift_fname)
                         lift_vars = [
-                            v for v in lift_vcf if (v.chrom, v.pos) in region_itv
+                            v for v in lift_vcf if (v.chrom, v.pos) in region_itv and 'MLrejected' not in v.filter
                         ]
                         lift_vcf.close()
                     else:
@@ -1321,7 +1322,7 @@ class Gene:
                     if orig_fname:
                         orig_vcf = vcflib.VCF(orig_fname)
                         orig_vars = [
-                            v for v in orig_vcf if (v.chrom, v.pos) in region_itv
+                            v for v in orig_vcf if (v.chrom, v.pos) in region_itv and 'MLrejected' not in v.filter
                         ]
                         orig_vcf.close()
                     else:
