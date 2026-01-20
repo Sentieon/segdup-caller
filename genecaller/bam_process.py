@@ -3,7 +3,7 @@ import pysam
 import os
 import subprocess
 import sys
-from .util import IntervalList, get_data_file, rc
+from .util import IntervalList, get_data_file
 from .logging import get_logger
 import heapq
 from collections import namedtuple, Counter
@@ -77,6 +77,11 @@ class Bam:
         self._depth_coords_cache.clear()  # Clear cache when resetting
         self.clipped_bam = None
         self.dp_norm = 1.0
+
+    @staticmethod
+    def rc(seq: str) -> str:
+        rev = {"A": "T", "C": "G", "T": "A", "G": "C", "N": "N"}
+        return "".join([rev[s] for s in seq[-1::-1]])
 
     def call_variant(self, output: str, param: Dict[str, Any]) -> None:
         if self.use_existing and os.path.exists(output) and os.path.getsize(output):
@@ -576,7 +581,7 @@ class Bam:
             if read.is_unmapped:
                 if read.query_sequence:
                     read_seq = (
-                        rc(read.query_sequence)
+                        self.rc(read.query_sequence)
                         if read.is_reverse
                         else read.query_sequence
                     )
@@ -622,7 +627,9 @@ class Bam:
                     continue
                 cur_pos = ref_positions.setdefault(region.split(":")[0], {})
                 read_seq = (
-                    rc(read.query_sequence) if read.is_reverse else read.query_sequence
+                    self.rc(read.query_sequence)
+                    if read.is_reverse
+                    else read.query_sequence
                 )
                 key = read.query_name + read_seq[:20]
                 if key in read_names:
@@ -1252,21 +1259,13 @@ class Phased_vcf:
         params: Dict[str, Any],
     ) -> Tuple[List[Any], List[Any]]:
         vcf = vcflib.VCF(liftover_vcf)
-        region1 = (
-            IntervalList(region=params["region"]) if params.get("region") else None
-        )
-        orig_region = (
-            IntervalList(region=params["orig_region"])
-            if params.get("orig_region")
-            else None
-        )
+        region1 = IntervalList(region=params["region"])
+        orig_region = IntervalList(region=params["orig_region"])
+        cns = params["cns"]
+        chr = list(region1.regions.keys())[0]
         liftover_region = region1  # region1.subtract(orig_region) if region1 else None
         gene_id = params["gene_id"]
-        orig_region2 = (
-            IntervalList(region=self.gene.mapping.interval(orig_region))
-            if orig_region
-            else None
-        )
+        orig_region2 = IntervalList(region=self.gene.mapping.interval(orig_region))
         all_vars = [
             v
             for v in vcf
@@ -1296,7 +1295,7 @@ class Phased_vcf:
             ]
             direction = "backward" if gene_id == 0 else "forward"
             for v2 in self.gene.mapping.convert_vars(
-                to_convert, direction, ref_diff=False
+                to_convert, direction, (chr, cns[1]), ref_diff=False
             ):
                 heapq.heappush(all_v2s, (v2.pos, v2))
         cns = params["cns"]

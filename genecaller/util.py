@@ -544,23 +544,26 @@ class GeneMapping:
     def convert21(
         self,
         variants: List[Any],
+        params: tuple,
         ref_diff: bool = True,
         annotate_fn: Optional[Callable] = None,
     ):
-        return self.convert_vars(variants, True, ref_diff, annotate_fn)
+        return self.convert_vars(variants, True, params, ref_diff, annotate_fn)
 
     def convert12(
         self,
         variants: List[Any],
+        params: tuple,
         ref_diff: bool = True,
         annotate_fn: Optional[Callable] = None,
     ):
-        return self.convert_vars(variants, False, ref_diff, annotate_fn)
+        return self.convert_vars(variants, False, params, ref_diff, annotate_fn)
 
     def convert_vars(
         self,
         variants: List[Any],
         to_gene1: bool,
+        params: tuple,
         ref_diff: bool,
         annotate_fn: Optional[Callable] = None,
     ):
@@ -568,10 +571,10 @@ class GeneMapping:
             (self.intervals2, True) if to_gene1 else (self.intervals1, False)
         )
         pq, uid = [], 0
-        cn = 2
+
+        chr, cn = params
         if variants:
             cn = len(re.split(r"\||/", variants[0].samples[0]["GT"]))
-            chr = variants[0].chrom
 
         for v in variants:
             heapq.heappush(pq, HeapItem(v.pos, v.pos + len(v.ref), True, v, uid))
@@ -706,7 +709,7 @@ class GeneMapping:
                             yield ann(v) if ann else v
                     return
             elif any(
-                [a[0] != fin_ref[0] for a in fin_alts]
+                [len(a) == 0 or a[0] != fin_ref[0] for a in fin_alts]
             ):  # add anchor base for INDEL
                 t_pos -= 1
                 if t_pos in self.keys1:
