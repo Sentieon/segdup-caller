@@ -3,12 +3,58 @@ from .logging import get_logger
 from .gene_model import create_gene_priors, GenePriors, GeneConversionSegment
 from .conversion_detector import GeneConversionDetector
 import copy
+from dataclasses import dataclass, field
 from genecaller.bam_process import CopyNumberModel, Phased_vcf
 from concurrent.futures import ThreadPoolExecutor
 import heapq
 import vcflib
 from typing import List, Dict, Tuple, Any, Optional
 import numpy as np
+
+
+@dataclass
+class IterationState:
+    """Tracks state between CNV-conversion iterations."""
+
+    iteration: int = 0
+    cn_states: Dict[int, int] = field(default_factory=dict)  # region_id -> cn_diff
+    del_states: Dict[int, int] = field(default_factory=dict)  # del_id -> cn_diff
+    conversion_segments: List[GeneConversionSegment] = field(default_factory=list)
+    log_prob: float = float("-inf")
+    ratio_adjustments: Dict[int, float] = field(
+        default_factory=dict
+    )  # position -> adjusted_ratio
+
+    def get_cn_signature(self) -> Tuple:
+        """Return hashable signature of current CN state."""
+        cn_tuple = tuple(sorted(self.cn_states.items()))
+        del_tuple = tuple(sorted(self.del_states.items()))
+        return (cn_tuple, del_tuple)
+
+    def get_conversion_signature(self) -> Tuple:
+        """Return hashable signature of conversion segments."""
+        if not self.conversion_segments:
+            return ()
+        return tuple(
+            (seg.start, seg.end, seg.conversion_allele_count)
+            for seg in sorted(self.conversion_segments, key=lambda s: s.start)
+        )
+
+    def has_converged(self, other: "IterationState", threshold: float = 0.01) -> bool:
+        """Check if state has converged compared to previous iteration."""
+        # CN states must match exactly
+        if self.get_cn_signature() != other.get_cn_signature():
+            return False
+
+        # Conversion segments must match
+        if self.get_conversion_signature() != other.get_conversion_signature():
+            return False
+
+        # Log probability should be stable
+        if abs(self.log_prob - other.log_prob) > threshold:
+            return False
+
+        return True
 
 
 class GeneRegion:
@@ -293,6 +339,23 @@ class Gene:
         self.gene_regions = cfg["gene_regions"]
         self.conversion_regions = cfg.get("conversion_regions", [])
         self.recombination_regions = cfg.get("recombination_regions", None)
+        # CNV exclusion regions: regions where diff sites should be excluded from
+        # CNV allele balance modeling (e.g., gene conversion hotspots)
+        # Defaults to recombination_regions if not explicitly set
+        cnv_exclude_cfg = cfg.get("cnv_exclude_regions", None)
+        if cnv_exclude_cfg is None:
+            # Default: use recombination_regions
+            cnv_exclude_cfg = self.recombination_regions or []
+        if cnv_exclude_cfg:
+            self.cnv_exclude_regions = IntervalList(
+                region=",".join(cnv_exclude_cfg)
+                if isinstance(cnv_exclude_cfg, list)
+                else cnv_exclude_cfg
+            )
+        else:
+            self.cnv_exclude_regions = None
+        # Save original cnv_exclude_regions for iteration toggle
+        self._original_cnv_exclude_regions = self.cnv_exclude_regions
         self.result_vcfs = []
         self.diff_vcf = [get_data_file(p) for p in cfg["diff_vcf"]]
         assert all(self.diff_vcf)
@@ -413,6 +476,71 @@ class Gene:
                     f"Using default longdel priors: {default_prob} for each deletion"
                 )
 
+    def _set_cnv_exclusion_mode(self, mode: str) -> None:
+        """
+        Toggle CNV exclusion mode for iterative CNV-conversion detection.
+
+        Args:
+            mode: 'exclude' - use original cnv_exclude_regions (iteration 0)
+                  'include' - set to None, use ratio adjustments instead (iteration 1+)
+        """
+        if mode == "exclude":
+            # Restore original exclusion (set during __init__)
+            self.cnv_exclude_regions = self._original_cnv_exclude_regions
+            self.logger.debug("CNV exclusion mode: exclude (using original regions)")
+        elif mode == "include":
+            # Clear exclusion - will use ratio adjustments instead
+            self.cnv_exclude_regions = None
+            self.logger.debug("CNV exclusion mode: include (using ratio adjustments)")
+        else:
+            raise ValueError(f"Unknown CNV exclusion mode: {mode}")
+
+    def _extract_conversion_n_values(self) -> Dict[int, int]:
+        """
+        Extract conversion_allele_count (N) per position from detected segments.
+
+        These N values are used during hill-climbing to calculate adjusted ratios
+        based on the test CN state being evaluated.
+
+        Returns:
+            Dict mapping position -> N value (conversion_allele_count)
+        """
+        n_values: Dict[int, int] = {}
+
+        if not hasattr(self, "converted_segments") or not self.converted_segments:
+            return n_values
+
+        for seg in self.converted_segments:
+            if seg.conversion_allele_count is None:
+                continue
+            N = seg.conversion_allele_count
+            for signal in seg.signals:
+                n_values[signal.position] = N
+
+        self.logger.debug(f"Extracted {len(n_values)} conversion N values")
+        return n_values
+
+    def _capture_iteration_state(self) -> "IterationState":
+        """Capture current state for iteration tracking."""
+        state = IterationState()
+
+        # Capture CN states
+        for rid, info in self.all_vars.get("cns", {}).items():
+            state.cn_states[rid] = info.get("cn_diff", 0)
+
+        # Capture deletion states
+        for did, info in self.all_vars.get("dels", {}).items():
+            state.del_states[did] = info.get("cn_diff", 0)
+
+        # Capture conversion segments
+        if hasattr(self, "converted_segments") and self.converted_segments:
+            state.conversion_segments = self.converted_segments.copy()
+
+        # Capture log probability
+        state.log_prob = self.cal_logprob_cn()
+
+        return state
+
     def setup_regions(self, config: dict) -> None:
         self.all_regions = []  # full list of GeneRegion objects
         self.segdup_regions = []  # list of GeneRegion objects for all segdup regions
@@ -517,7 +645,8 @@ class Gene:
         for _, v in self.all_vars["cns"].items():
             cns[v["name"]] = 2 + v["cn_diff"]
         for _, v in self.all_vars["dels"].items():
-            cns[v["name"]] = v["cn_diff"]
+            if v["cn_diff"] != 0:  # Only report detected deletions
+                cns[v["name"]] = v["cn_diff"]
 
         # Load known conversions if database is configured
         known_conversions = []
@@ -541,7 +670,11 @@ class Gene:
                         conversion_data["fusion_type"] = fusion_type
                 else:
                     conversion_data["conversion_sites"] = [
-                        s.id for s in seg.signals if s.is_conversion_site()
+                        s.id
+                        for s in sorted(
+                            (x for x in seg.signals if x.is_conversion_site()),
+                            key=lambda x: x.position,
+                        )
                     ]
 
                 # Match against known conversions if available
@@ -986,6 +1119,20 @@ class Gene:
         high_mq_regions = IntervalList(self.high_mq_regions["short_read"])
         total_prob = 0.0
         min_region_size = 400
+
+        # Calculate longdel priors ONCE per deletion event (not per sub-region)
+        # Each deletion is an independent event with its own prior
+        total_longdel_prior = 0.0
+        for del_id, del_name in enumerate(self.longdel_names):
+            cn_diff_for_del = self.all_vars["dels"].get(del_id, {}).get("cn_diff", 0)
+            if del_name in self._longdel_log_priors:
+                if cn_diff_for_del != 0:  # Deletion is present
+                    total_longdel_prior += self._longdel_log_priors[del_name]
+                else:  # Deletion is absent
+                    # Use log(1 - p) for no deletion
+                    p_del = np.exp(self._longdel_log_priors[del_name])
+                    total_longdel_prior += np.log(1 - p_del) if p_del < 0.999 else -1e6
+
         # check validity
         for r in self.all_regions:
             cn_diff = self.get_cn_diff(r.region_id, r.longdel_id)
@@ -1002,32 +1149,10 @@ class Gene:
             # Use region-specific priors if available (via region name)
             cn_log_prior = self.get_prior_by_region_id(r.region_id)
 
-            # Calculate longdel priors for deletions affecting this region
-            longdel_log_prior = 0.0
-            if r.longdel_id > 0:
-                # Check each deletion bit that's set
-                for del_id in range(len(self.longdel_names)):
-                    if (
-                        r.longdel_id >> del_id
-                    ) & 1:  # This deletion affects this region
-                        del_name = self.longdel_names[del_id]
-                        cn_diff_for_del = (
-                            self.all_vars["dels"].get(del_id, {}).get("cn_diff", 0)
-                        )
-
-                        if del_name in self._longdel_log_priors:
-                            if cn_diff_for_del != 0:  # Deletion is present
-                                longdel_log_prior += self._longdel_log_priors[del_name]
-                            else:  # Deletion is absent
-                                # Use log(1 - p) for no deletion
-                                p_del = np.exp(self._longdel_log_priors[del_name])
-                                longdel_log_prior += (
-                                    np.log(1 - p_del) if p_del < 0.999 else -1e6
-                                )
-
-            total_log_prior = cn_log_prior + longdel_log_prior
+            # Note: longdel priors are now calculated once per event above,
+            # not per sub-region here
             region_prob = bam.calc_logprob(
-                mq_region.to_region_str(), cn, log_prior=total_log_prior
+                mq_region.to_region_str(), cn, log_prior=cn_log_prior
             )
             total_prob += region_prob
         cn_neutral = 2 * len(self.liftover_segdup_regions)
@@ -1038,55 +1163,31 @@ class Gene:
                     for j in range(len(r.orig_region_id))
                 ]
 
-                # Calculate CN priors and longdel priors for each paralogous region
-                cn_log_priors = []
-                longdel_log_priors = []
-
-                for j in range(len(r.orig_region_id)):
-                    diff = diffs[j]
-                    # CN prior
-                    cn = diff + 2
-                    cn_log_priors.append(
-                        self.get_prior_by_region_id(r.orig_region_id[j])
-                    )
-                    # Longdel priors for this paralogous region
-                    longdel_prior = 0.0
-                    longdel_id = r.orig_longdel_id[j]
-                    if longdel_id > 0:
-                        for del_id in range(len(self.longdel_names)):
-                            if (
-                                longdel_id >> del_id
-                            ) & 1:  # This deletion affects this region
-                                del_name = self.longdel_names[del_id]
-                                cn_diff_for_del = (
-                                    self.all_vars["dels"]
-                                    .get(del_id, {})
-                                    .get("cn_diff", 0)
-                                )
-
-                                if del_name in self._longdel_log_priors:
-                                    if cn_diff_for_del != 0:  # Deletion is present
-                                        longdel_prior += self._longdel_log_priors[
-                                            del_name
-                                        ]
-                                    else:  # Deletion is absent
-                                        p_del = np.exp(
-                                            self._longdel_log_priors[del_name]
-                                        )
-                                        longdel_prior += (
-                                            np.log(1 - p_del) if p_del < 0.999 else -1e6
-                                        )
-
-                    longdel_log_priors.append(longdel_prior)
+                # Calculate CN priors for each paralogous region
+                # Note: longdel priors are now calculated once per event above
+                cn_log_priors = [
+                    self.get_prior_by_region_id(r.orig_region_id[j])
+                    for j in range(len(r.orig_region_id))
+                ]
 
                 cn_total = cn_neutral + sum(diffs)
-                log_prior = sum(cn_log_priors) + sum(longdel_log_priors)
+                log_prior = sum(cn_log_priors)
                 diff0 = diffs[0]
                 ratio = (2 + diff0) / cn_total if cn_total else 0
+                # Pass conversion N values if available (for iterative CNV-conversion)
+                conversion_n_values = getattr(self, "_conversion_n_values", None)
                 liftover_prob = liftover_bam.calc_logprob(
-                    r.region, cn_total, r.ads, ratio, log_prior=log_prior
+                    r.region,
+                    cn_total,
+                    r.ads,
+                    ratio,
+                    log_prior=log_prior,
+                    conversion_n_values=conversion_n_values,
                 )
                 total_prob += liftover_prob
+
+        # Add longdel priors once for the entire calculation
+        total_prob += total_longdel_prior
         return total_prob
 
     def call_cn(self, read_data: Dict[str, Any], params: Dict[str, Any]) -> None:
@@ -1095,6 +1196,86 @@ class Gene:
         # self.solve_longdel()
         self.segmentation()
         self.solve_cn()
+
+    def call_cn_with_conversion_iteration(
+        self, read_data: Dict[str, Any], params: Dict[str, Any]
+    ) -> None:
+        """
+        Iteratively refine CNV and conversion detection.
+
+        This method implements the iterative loop:
+        1. Call CN with exclusion of recombination regions
+        2. Detect gene conversions
+        3. Update expected allele ratios based on conversion info
+        4. Re-run CN detection with adjusted ratios
+        5. Repeat until convergence or max iterations
+        """
+        self.read_data = read_data
+        self.params = params
+
+        # Get iteration config
+        max_iters = self.config.get("cnv_conversion_iters", 1)
+        convergence_threshold = self.config.get("convergence_threshold", 0.01)
+
+        if max_iters <= 1:
+            # No iteration - use current behavior
+            self.call_cn(read_data, params)
+            self.merge_regions_by_cn()
+            self.detect_gene_conversions()
+            return
+
+        self.logger.info(
+            f"Starting iterative CNV-conversion detection (max_iters={max_iters})"
+        )
+
+        # Track iteration history
+        prev_state: Optional[IterationState] = None
+        self._conversion_n_values: Dict[int, int] = {}  # N values per position
+
+        for iteration in range(max_iters):
+            self.logger.info(f"=== Iteration {iteration} ===")
+
+            # Determine exclusion behavior for this iteration
+            if iteration == 0:
+                # First iteration: exclude recombination regions (current behavior)
+                self._set_cnv_exclusion_mode("exclude")
+            else:
+                # Subsequent iterations: include with N-value adjustments
+                self._set_cnv_exclusion_mode("include")
+
+            # Run CN detection
+            self.segmentation()
+            self.solve_cn()
+
+            # Merge regions before conversion detection
+            self.merge_regions_by_cn()
+
+            # Run conversion detection
+            self.detect_gene_conversions()
+
+            # Extract N values for next iteration's ratio adjustments
+            self._conversion_n_values = self._extract_conversion_n_values()
+
+            # Capture current state
+            current_state = self._capture_iteration_state()
+
+            self.logger.info(
+                f"Iteration {iteration}: log_prob={current_state.log_prob:.4f}, "
+                f"conversions={len(current_state.conversion_segments)}, "
+                f"n_values={len(self._conversion_n_values)}"
+            )
+
+            # Check convergence
+            if prev_state is not None:
+                if current_state.has_converged(prev_state, convergence_threshold):
+                    self.logger.info(f"Converged after {iteration + 1} iterations")
+                    break
+
+            prev_state = current_state
+
+        self.logger.info(
+            f"Iterative detection complete after {iteration + 1} iterations"
+        )
 
     def _call_variant(self, params: dict) -> bool:
         """Helper method to call variants for a single region."""
@@ -1206,8 +1387,7 @@ class Gene:
 
         self.logger.info("Completed parallel variant calling")
 
-    def resolve_phased(self, params: Dict[str, Any]) -> None:
-        # first merge all liftover_segdup regions into original regions
+    def merge_regions_by_cn(self):
         for i, segdup_regions in enumerate(self.orig_segdup_regions):
             for r in segdup_regions:
                 self.merged_liftover_segdup_regions[i] = GeneRegion.insert(
@@ -1258,6 +1438,7 @@ class Gene:
                             ):
                                 matched.matched_region.append(m)
 
+    def resolve_phased(self, params: Dict[str, Any]) -> None:
         # Now all regions are CN-distinct with full info about its CN and its matching segdup
         # For each region, resolve phased small variants
         all_vars = []
@@ -1279,7 +1460,10 @@ class Gene:
                         if orig_fname:
                             orig_vcf = vcflib.VCF(orig_fname)
                             orig_vars = [
-                                v for v in orig_vcf if (v.chrom, v.pos) in region_itv and 'MLrejected' not in v.filter
+                                v
+                                for v in orig_vcf
+                                if (v.chrom, v.pos) in region_itv
+                                and "MLrejected" not in v.filter
                             ]
                             orig_vcf.close()
                         else:
@@ -1313,7 +1497,10 @@ class Gene:
                     if lift_fname:
                         lift_vcf = vcflib.VCF(lift_fname)
                         lift_vars = [
-                            v for v in lift_vcf if (v.chrom, v.pos) in region_itv and 'MLrejected' not in v.filter
+                            v
+                            for v in lift_vcf
+                            if (v.chrom, v.pos) in region_itv
+                            and "MLrejected" not in v.filter
                         ]
                         lift_vcf.close()
                     else:
@@ -1322,7 +1509,10 @@ class Gene:
                     if orig_fname:
                         orig_vcf = vcflib.VCF(orig_fname)
                         orig_vars = [
-                            v for v in orig_vcf if (v.chrom, v.pos) in region_itv and 'MLrejected' not in v.filter
+                            v
+                            for v in orig_vcf
+                            if (v.chrom, v.pos) in region_itv
+                            and "MLrejected" not in v.filter
                         ]
                         orig_vcf.close()
                     else:
@@ -1375,10 +1565,9 @@ class Gene:
 
             # Find all overlapping duplicated regions and group by copy number
             # Split conversion detection if CN changes within the conversion region
-            segments_by_cn = []  # List of (cns, start, end, vcf_files)
+            segments_by_cn = []  # List of (cns, start, end)
             current_cns = None
             current_start = region_start
-            current_vcfs = []
 
             for r in self.merged_regions:
                 if not r.dup:
@@ -1398,34 +1587,25 @@ class Gene:
                 if current_cns is None:
                     # First overlapping region
                     current_cns = region_cns
-                    current_vcfs = [r.phased_vcf["short_read"]["liftover"]]
-                elif region_cns == current_cns:
-                    # Same CN, continue accumulating
-                    current_vcfs.append(r.phased_vcf["short_read"]["liftover"])
-                else:
+                elif region_cns != current_cns:
                     # CN changed - save current segment and start new one
-                    segments_by_cn.append(
-                        (current_cns, current_start, r_start, current_vcfs)
-                    )
+                    segments_by_cn.append((current_cns, current_start, r_start))
                     current_cns = region_cns
                     current_start = r_start
-                    current_vcfs = [r.called_vcf["short_read"]["liftover"]]
 
             # Add final segment
-            if current_cns is not None and current_vcfs:
-                segments_by_cn.append(
-                    (current_cns, current_start, region_end, current_vcfs)
-                )
+            if current_cns is not None:
+                segments_by_cn.append((current_cns, current_start, region_end))
 
             # Run conversion detection for each CN-uniform segment
-            for cns, seg_start, seg_end, vcf_files in segments_by_cn:
+            for cns, seg_start, seg_end in segments_by_cn:
                 cfg = copy.deepcopy(conversion_config)
                 cfg["conversion_region"] = f"{chrom}:{seg_start}-{seg_end}"
                 cfg["copy_numbers"] = cns
                 cfg["gene_strand"] = self.gene_strand
 
                 detector = GeneConversionDetector(self, cfg)
-                detector.load_variants(set(vcf_files))
+                detector.load_psv_sites_from_diff_vcf(self.diff_vcf)
                 segments = detector.detect_conversions()
                 all_segments.extend(segments)
 

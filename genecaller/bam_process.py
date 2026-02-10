@@ -712,6 +712,7 @@ class Bam:
         err_rate: float = 0.01,
         w_ad: float = 0.5,  # weight for the allele depth (AD) evidence
         log_prior: float = 0.0,  # log prior for CN
+        conversion_n_values: Optional[Dict[int, int]] = None,  # position -> N value
     ) -> float:
         probe_depths = [2 * d.mean for d in self.get_depth(region)]
         num_probes = len(probe_depths)
@@ -736,17 +737,36 @@ class Bam:
             )
             return scaled_total_log_prob
 
-        p = np.clip(ratio, err_rate, 1 - err_rate)
-        # Calculate mean ADS ratio
+        # Calculate per-position AD log probabilities
+        positions = list(ads.keys())
         a_ads = np.array(list(ads.values()))
         total_first = np.sum(a_ads[:, 0])
         total_both = np.sum(a_ads)
         mean_ads_ratio = total_first / total_both if total_both > 0 else -1
 
-        # Calculate AD log probability sum
-        log_prob_ad_sum = binom.logpmf(
-            k=a_ads[:, 0], n=np.sum(a_ads, axis=1), p=p
-        ).sum()
+        log_prob_ad_list = []
+        for i, pos in enumerate(positions):
+            ad = a_ads[i]
+
+            # Calculate position-specific ratio if conversion detected
+            if conversion_n_values and pos in conversion_n_values and cn > 0:
+                N = conversion_n_values[pos]
+                # Adjusted ratio: gene1 loses N alleles
+                # Original: ratio = gene1_cn / total_cn
+                # Adjusted: (gene1_cn - N) / total_cn = ratio - N/cn
+                pos_ratio = ratio - N / cn
+
+                # Validity check: ratio must be in [0, 1]
+                if pos_ratio < 0 or pos_ratio > 1:
+                    return -1e9  # Invalid CN configuration
+            else:
+                pos_ratio = ratio
+
+            p = np.clip(pos_ratio, err_rate, 1 - err_rate)
+            log_prob = binom.logpmf(k=ad[0], n=np.sum(ad), p=p)
+            log_prob_ad_list.append(log_prob)
+
+        log_prob_ad_sum = np.sum(log_prob_ad_list)
 
         # Step 2: Hybrid approach - normalize to comparable scales
         avg_log_prob_depth = log_prob_depth_sum / num_probes
@@ -961,6 +981,10 @@ class CopyNumberModel:
             if len(self.gene.diff_vcf) == 1
             else self.gene.liftover_target_regions
         )
+        # Get chromosome for CNV exclusion region lookup
+        # Extract from first gene region (all regions should be on same chromosome)
+        chrom = self.gene.gene_regions[0].split(":")[0]
+        cnv_exclude = self.gene.cnv_exclude_regions
         for i in range(len(self.gene.diff_vcf)):
             pos_ads1 = self.get_ads_bygiven(
                 bam,
@@ -988,6 +1012,7 @@ class CopyNumberModel:
                 (p, ads)
                 for p, ads in pos_ads.items()
                 if p not in excl_pos
+                and (cnv_exclude is None or (chrom, p) not in cnv_exclude)
                 and (
                     p not in pos_ads1
                     or pos_ads1[p][0] - ads[0] <= 5
@@ -1146,8 +1171,8 @@ class Phased_vcf:
     @staticmethod
     def match(
         vars: List[Any],
-        v1s: List[Tuple[int, Any]],
-        v2s: List[Tuple[int, Any]],
+        v1s: List[Tuple[int, int, Any]],
+        v2s: List[Tuple[int, int, Any]],
     ) -> Dict[int, List[Any]]:
         def _count_alt(v):
             gt = map(int, re.split(r"\||/", v.samples[0]["GT"]))
@@ -1158,9 +1183,9 @@ class Phased_vcf:
             return Counter(res)
 
         matched = {}
-        for pos, v in v1s:
+        for pos, _, v in v1s:
             matched.setdefault(pos, [None, None, None])[0] = (_count_alt(v), v)
-        for pos, v in v2s:
+        for pos, _, v in v2s:
             matched.setdefault(pos, [None, None, None])[1] = (_count_alt(v), v)
         for v in vars:
             matched.setdefault(v.pos, [None, None, None])[2] = (_count_alt(v), v)
@@ -1277,15 +1302,18 @@ class Phased_vcf:
         all_v2s = []
         if in_vcf1:
             vcf1 = vcflib.VCF(in_vcf1)
+            i = 0
             for v1 in vcf1:
                 if (
                     orig_region
                     and (v1.chrom, v1.pos) in orig_region
                     and (not v1.filter or "." in v1.filter or "PASS" in v1.filter)
                 ):
-                    heapq.heappush(all_v1s, (v1.pos, v1))
+                    heapq.heappush(all_v1s, (v1.pos, i, v1))
+                    i += 1
         if in_vcf2:
             vcf2 = vcflib.VCF(in_vcf2)
+            i = 0
             to_convert = [
                 v2
                 for v2 in vcf2
@@ -1293,11 +1321,12 @@ class Phased_vcf:
                 and (v2.chrom, v2.pos) in orig_region2
                 and (not v2.filter or "." in v2.filter or "PASS" in v2.filter)
             ]
-            direction = "backward" if gene_id == 0 else "forward"
+            to_gene1 = gene_id == 0
             for v2 in self.gene.mapping.convert_vars(
-                to_convert, direction, (chr, cns[1]), ref_diff=False
+                to_convert, to_gene1, (chr, cns[1]), ref_diff=True
             ):
-                heapq.heappush(all_v2s, (v2.pos, v2))
+                heapq.heappush(all_v2s, (v2.pos, i, v2))
+                i += 1
         cns = params["cns"]
         if len(cns) != 2:
             self.logger.error(
@@ -1308,7 +1337,7 @@ class Phased_vcf:
             out_v1s = []
             out_liftover = all_vars
             while all_v1s:
-                _, v = heapq.heappop(all_v1s)
+                _, _, v = heapq.heappop(all_v1s)
                 out_v1s.append(v)
         else:
             matched = self.match(all_vars, all_v1s, all_v2s)
@@ -1347,7 +1376,7 @@ class Phased_vcf:
                     heapq.heappush(out_vars, (vv.pos, 1, vv))
                 for vv in v1s:
                     heapq.heappush(out_var1s, (vv.pos, 1, vv))
-            for _, v in all_v1s:
+            for _, _, v in all_v1s:
                 heapq.heappush(out_var1s, (v.pos, 2, v))
             out_v1s = []
             last_pos = None

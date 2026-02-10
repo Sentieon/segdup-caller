@@ -70,14 +70,22 @@ def process_single_gene(gene_data: tuple) -> Dict:
 
         # Copy number calling
         gene_logger.info("Call copy number...")
-        gene.call_cn(read_data, params)
+        if gene.config.get("cnv_conversion_iters", 1) > 1:
+            # Use iterative CNV-conversion detection
+            gene.call_cn_with_conversion_iteration(read_data, params)
+        else:
+            # Original behavior
+            gene.call_cn(read_data, params)
+            gene.merge_regions_by_cn()
+            gene.detect_gene_conversions()
 
         # Variant calling
-        gene_logger.info("Call small variants...")
-        gene.call_small_var()
-        gene.resolve_phased(params)
-
-        gene.detect_gene_conversions()
+        if not params.get("skip_variant_call", False):
+            gene_logger.info("Call small variants...")
+            gene.call_small_var()
+            gene.resolve_phased(params)
+        else:
+            gene_logger.info("Skipping small variant calling (--skip-variant-call)")
 
         # Prepare output
         gene_logger.info("Prepare final output")
@@ -280,6 +288,12 @@ class GeneCaller:
             default="INFO",
             help=argparse.SUPPRESS,
         )
+        parser.add_argument(
+            "--skip-variant-call",
+            action="store_true",
+            default=False,
+            help=argparse.SUPPRESS,
+        )
         args = parser.parse_args()
 
         # Setup tools after argument parsing (so --version and --help work without dependencies)
@@ -376,6 +390,7 @@ class GeneCaller:
                 "log_level": args.log_level,
                 "threads": args.threads,
                 "workers": args.workers,
+                "skip_variant_call": args.skip_variant_call,
             }
         )
         self.args = args

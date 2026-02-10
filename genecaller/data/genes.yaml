@@ -55,6 +55,7 @@ CYP2D6:
   - - CYP2D7
     - chr22:42135344-42138112,chr22:42139675-42145873
   map: data/CYP2D6_CYP2D7.dat
+  cnv_exclude_regions: []
   recombination_regions:
     - chr22:42126500-42126800  # Exon 9 - for CYP2D6*36 & *4N
     - chr22:42126800-42128000  # Intron 7 - major recombination hotspot
@@ -120,10 +121,38 @@ PMS2:
   gene_regions:
   - chr7:5965000-5993410
   - chr7:6733563-6759796
+  longdel: 
+  - [PMS2_exon13-15.DEL, chr7:5970925-5979200]
+  - [PMS2_exon14.DEL, chr7:5977466-5977633]
+  - [PMS2_exon10.DEL, chr7:5989800-5989955]
+  - [PMS2CL_exon13-14.DEL,     chr7:6748000-6750000]
   map: data/PMS2_PMS2CL.dat
+  liftover_regions:
+  - - PMS2
+    # exons 11-15 + tail, (Exon 10 unique gap), Intron 9, exon 9 (upstream)
+    - chr7:5965000-5989044,chr7:5991653-5992796,chr7:5992797-5993410
+  - - PMS2CL
+    - chr7:6735644-6759796,chr7:6734551-6735547,chr7:6733563-6734235
+  conversion_regions:
+  - region: "chr7:5977708-5989028"  # Blocks 1, 2, 3 (full detection region)
+    fusion_detection: true
+    three_prime_terminus: 5977708  # Block 1 boundary (3' terminus on negative strand)
+  recombination_regions:
+    - chr7:5978823-5979229  # Block 2 only (primary recombination hotspot)
   config:
     prior_type: gaussian  # Conservative symmetric prior
-    cn_prior_std: 0.5     # Tight around CN=2 for highly conserved gene
+    cn_prior_std: 0.5
+    transition_rate_background: 1e-8  # Very sticky in stable exonic regions
+    transition_rate_hotspot: 0.01    # Loose in recombination hotspots
+    # Iterative CNV-conversion detection
+    cnv_conversion_iters: 2          # Max iterations (1 = no iteration)
+    convergence_threshold: 0.01      # Log-prob stability threshold
+    # Deletion-specific priors (clinically-informed)
+    longdel_priors:
+      PMS2CL_exon13-14.DEL: 0.25     # Very common benign polymorphism (~25% population)
+      PMS2_exon13-15.DEL: 2.0e-4     # Most common pathogenic PMS2 CNV (0.02%)
+      PMS2_exon14.DEL: 5.0e-5        # Focal deletion, ~10-15% of pathogenic CNVs (0.005%)
+      PMS2_exon10.DEL: 2.0e-5        # Founder mutation, ~5-10% of pathogenic CNVs (0.002%)
 SMN1:
   gene_strand: "+"
   diff_vcf:

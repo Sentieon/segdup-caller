@@ -157,6 +157,52 @@ class GeneConversionDetector:
         self.signals = calc_conversion_signals(records)
         self.logger.info(f"Calculated {len(self.signals)} conversion signals")
 
+    def load_psv_sites_from_diff_vcf(self, diff_vcf_files):
+        """Load PSV sites from diff_vcf files. REF=gene allele, ALT=pseudo allele."""
+        self.logger.debug(
+            f"Loading PSV sites from {len(diff_vcf_files)} diff_vcf files"
+        )
+        liftover_bam = self.gene.read_data["short_read"]["liftover"]
+        records = []
+
+        for vcf_file in diff_vcf_files:
+            vcf = vcflib.VCF(vcf_file)
+            vars_in_region = list(vcf.range(self.chrom, self.start, self.end))
+            self.logger.debug(
+                f"  {vcf_file}: {len(vars_in_region)} PSV sites in region"
+            )
+
+            for v in vars_in_region:
+                if len(v.ref) > 1 or any(len(alt) > 1 for alt in v.alt):
+                    continue
+
+                if v.info.get("EXCLUDE", 0):
+                    continue
+
+                pileuprec = liftover_bam.get_pileup(v.chrom, v.pos)
+                if pileuprec is None:
+                    continue
+
+                gene_cnt = pileuprec.AD.get(v.ref, 0)
+                pseudo_cnt = pileuprec.AD.get(v.alt[0], 0)
+
+                if sum(pileuprec.AD.values()) - (gene_cnt + pseudo_cnt) > 2:
+                    continue
+
+                total = gene_cnt + pseudo_cnt
+                if total < 5:
+                    continue
+
+                site_id = v.id if v.id and v.id != "." else f"{v.chrom}:{v.pos}"
+                records.append([site_id, v.pos, [gene_cnt, pseudo_cnt]])
+
+            vcf.close()
+
+        self.signals = calc_conversion_signals(records)
+        self.logger.info(
+            f"Loaded {len(records)} PSV sites, calculated {len(self.signals)} conversion signals"
+        )
+
     def _parse_region(self, region_str: str) -> tuple:
         """
         Parse a genomic region string into (chrom, start, end).

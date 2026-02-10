@@ -410,7 +410,9 @@ class GeneSegmenter(ABC):
         total_counts = total_counts[valid_mask]
 
         for state in range(self.total_cn + 1):
-            p = np.clip(state / self.total_cn, 1e-10, 1.0 - 1e-10)
+            # Use 0.01 epsilon to model ~1% sequencing/mapping error rate
+            # This prevents single outlier signals from dominating the likelihood
+            p = np.clip(state / self.total_cn, 0.01, 0.99)
             all_lls = scipy.stats.binom.logpmf(alt_counts, total_counts, p)
             ll = np.sum(all_lls)
 
@@ -825,8 +827,9 @@ class HMMSEGGeneSegmenter(GeneSegmenter):
         # The expected ratio p given the state k
         expected_ratio = state / self.total_cn
 
-        # Use 1e-10 to avoid p=0 or p=1 for binom.logpmf
-        p = np.clip(expected_ratio, 1e-10, 1.0 - 1e-10)
+        # Use 0.01 epsilon to model ~1% sequencing/mapping error rate
+        # This prevents single outlier signals from dominating the likelihood
+        p = np.clip(expected_ratio, 0.01, 0.99)
 
         return scipy.stats.binom.logpmf(alt_count, total_count, p)
 
