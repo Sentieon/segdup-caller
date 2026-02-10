@@ -207,3 +207,10 @@ Validated on **215 diverse samples** from HPRC v2.0 with truth CN calls derived 
 ### Clinical Databases
 - **HbVar Database**: http://globin.cse.psu.edu/hbvar/ - Hemoglobin variant database
 - **IthaGenes**: http://www.ithagenes.org/ - Hemoglobinopathy mutation database
+
+### Reference Data
+- **Human Pangenome Reference Consortium (HPRC)**: https://humanpangenome.org/ - Population-scale haplotype data used for validation
+
+### Literature
+
+1. Liao WW, Asber M, Didion JP, et al. (2023) "A draft human pangenome reference" *Nature* 617:312-324. https://doi.org/10.1038/s41586-023-05896-x

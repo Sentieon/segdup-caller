@@ -256,8 +256,11 @@ Specialized HMM transition rates:
   - Comprehensive star allele definitions
   - Updated regularly with new variants
 
+### Reference Data
+- **Human Pangenome Reference Consortium (HPRC)**: https://humanpangenome.org/ - Population-scale haplotype data used for validation
+
 ### Literature
 
 1. Gaedigk A, Turner A, Everts RE, et al. (2019) "Characterization of Reference Materials for Genetic Testing of CYP2D6 Alleles: A GeT-RM Collaborative Project" *Journal of Molecular Diagnostics* 21(6):1034-1052. https://doi.org/10.1016/j.jmoldx.2019.06.007
-
-2. Sentieon DNAscope: https://www.sentieon.com/products/
+2. Liao WW, Asber M, Didion JP, et al. (2023) "A draft human pangenome reference" *Nature* 617:312-324. https://doi.org/10.1038/s41586-023-05896-x
+3. Sentieon DNAscope: https://www.sentieon.com/products/

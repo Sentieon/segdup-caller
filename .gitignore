@@ -67,3 +67,4 @@ run.py
 # Temporary files
 *.tmp
 .cache/
+docs/

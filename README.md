@@ -2,7 +2,7 @@
 
 **Segdup Gene caller** is a variant caller for genes located in segmental duplication regions that contain highly similar homologs or pseudogenes. It can leverage available long-read sequencing data to improve variant calling accuracy.
 
-## ⚠️ Research Use Only Disclaimer
+## Research Use Only Disclaimer
 
 **THIS TOOL IS FOR RESEARCH USE ONLY AND IS NOT A VALIDATED CLINICAL TEST.**
 

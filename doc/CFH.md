@@ -240,3 +240,10 @@ These frequencies validate the region-specific Bayesian priors used in the model
 ### Clinical Databases
 - **ClinVar CFH**: https://www.ncbi.nlm.nih.gov/clinvar/?term=CFH
 - **aHUS Database**: Information on complement-mediated aHUS genetic causes
+
+### Reference Data
+- **Human Pangenome Reference Consortium (HPRC)**: https://humanpangenome.org/ - Population-scale haplotype data used for validation
+
+### Literature
+
+1. Liao WW, Asber M, Didion JP, et al. (2023) "A draft human pangenome reference" *Nature* 617:312-324. https://doi.org/10.1038/s41586-023-05896-x

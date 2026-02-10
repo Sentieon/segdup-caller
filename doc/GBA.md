@@ -265,6 +265,10 @@ Validated against **Tayebi et al. (2025)** findings on 1000 Genomes high-coverag
 - **ClinVar GBA**: https://www.ncbi.nlm.nih.gov/clinvar/?term=GBA
 - **NCBI Gaucher Disease GeneReview**: https://www.ncbi.nlm.nih.gov/books/NBK1269/
 
+### Reference Data
+- **Human Pangenome Reference Consortium (HPRC)**: https://humanpangenome.org/ - Population-scale haplotype data used for validation
+
 ### Literature
 
 1. Tayebi N, Lichtenberg J, Hertz E, et al. (2025) "Is Gauchian genotyping of GBA1 variants reliable?" *Communications Biology* 8:718. https://doi.org/10.1038/s42003-025-08059-y
+2. Liao WW, Asber M, Didion JP, et al. (2023) "A draft human pangenome reference" *Nature* 617:312-324. https://doi.org/10.1038/s41586-023-05896-x
