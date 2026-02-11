@@ -102,7 +102,7 @@ For CYP2D6xN alleles (CN ≥ 3):
 
 > **Note**: Clinical significance and interpretation information in the output examples below is for **Educational and Informational purposes only**.
 
-### Example 1: Simple Heterozygous Deletion (*1/*5)
+### Example 1: Simple Heterozygous Deletion (*1/*5) (NA18945)
 
 ```yaml
 CYP2D6:
@@ -126,7 +126,7 @@ CYP2D6:
     method: phased_consumption
 ```
 
-### Example 2: Hybrid Allele with Duplication (*68/*3/*4)
+### Example 2: Hybrid Allele with Duplication (*68/*3/*4) (NA12878)
 
 ```yaml
 CYP2D6:
@@ -162,7 +162,7 @@ CYP2D6:
     note: Duplication present - allele assignment may be ambiguous
 ```
 
-### Example 3: Normal Diploid (*2/*2)
+### Example 3: Normal Diploid (*2/*2) (NA18952)
 
 ```yaml
 CYP2D6:
@@ -187,7 +187,7 @@ CYP2D6:
     method: phased_consumption
 ```
 
-### Example 4: Poor Metabolizer (*56/*5)
+### Example 4: Poor Metabolizer (*56/*5) (HG03225)
 
 ```yaml
 CYP2D6:

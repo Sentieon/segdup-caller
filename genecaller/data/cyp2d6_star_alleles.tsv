@@ -1,14 +1,14 @@
-allele	function	tier	rsid	chrom	pos	ref	alt	effect	backbone
+allele	function	tier	rsid	chrom	pos	ref	alt	effect	backbone	associated_variants
 *13	No Function	1	STRUCTURAL	STRUCTURAL	*13	.	.	CYP2D7-CYP2D6 hybrid	0
-*68	No Function	1	STRUCTURAL	STRUCTURAL	*68	.	.	CYP2D6-CYP2D7 hybrid	0
+*68	No Function	1	STRUCTURAL	STRUCTURAL	*68	.	.	CYP2D6-CYP2D7 hybrid	0	chr22:42130692:G:A
 *36	No Function	1	STRUCTURAL	STRUCTURAL	*36	.	.	Exon 9 conversion	0
 *3	No Function	2	rs35742686	chr22	42128241	CT	C	Frameshift (p.R259fs)	0
-*4	No Function	2	rs3892097	chr22	42128945	C	T	Splicing Defect	0
-*6	No Function	2	rs5030655	chr22	42129083	CA	C	Frameshift (p.W152fs)	0
+*4	No Function	2	rs3892097	chr22	42128945	C	T	Splicing Defect	0	chr22:42130692:G:A;chr22:42126611:C:G
+*6	No Function	2	rs5030655	chr22	42129083	CA	C	Frameshift (p.W152fs)	0	chr22:42130692:G:A;chr22:42126611:C:G
 *7	No Function	2	rs5030867	chr22	42127856	T	G	Splicing Defect	0
-*8	No Function	2	rs5030865	chr22	42129033	C	A	p.G169X (Stop Codon)	0
-*11	No Function	2	rs201377835	chr22	42129910	C	G	Splicing Defect	0
-*12	No Function	2	rs5030862	chr22	42130668	C	T	Splicing Defect	0
+*8	No Function	2	rs5030865	chr22	42129033	C	A	p.G169X (Stop Codon)	0	chr22:42126611:C:G
+*11	No Function	2	rs201377835	chr22	42129910	C	G	Splicing Defect	0	chr22:42127941:G:A;chr22:42126611:C:G
+*12	No Function	2	rs5030862	chr22	42130668	C	T	Splicing Defect	0	chr22:42127941:G:A;chr22:42126611:C:G
 *15	No Function	2	rs774671100	chr22	42130654	C	CA	p.Q52X (Stop Codon)	0
 *18	No Function	2	rs765776661	chr22	42126657	C	CAGTGGGCAC	p.468_470dupVPT	0
 *19	No Function	2	rs72549353	chr22	42128250	GTTAG	G	p.T256fs	0
@@ -17,16 +17,16 @@ allele	function	tier	rsid	chrom	pos	ref	alt	effect	backbone
 *38	No Function	2	rs72549351	chr22	42128198	CTCAG	C	p.T272fs	0
 *42	No Function	2	rs72549346	chr22	42127531	C	CAC	p.Q364fs	0
 *44	No Function	2	rs72549349	chr22	42127841	C	G	splicing defect	0
-*47	No Function	2	rs267608313	chr22	42130719	G	A	p.R25W	0
+*47	No Function	2	rs267608313	chr22	42130719	G	A	p.R25W	0	chr22:42130692:G:A
 *51	No Function	2	rs72549348	chr22	42127619	T	G	p.E334A	0
 *53	No Function	2	rs766391487	chr22	42129166	A	C	p.Y124X (Stop Codon)	0
-*56	No Function	2	rs72549347	chr22	42127590	G	A	p.R344X (Stop Codon)	0
+*56	No Function	2	rs72549347	chr22	42127590	G	A	p.R344X (Stop Codon)	0	chr22:42130692:G:A
 *62	No Function	2	rs730882251	chr22	42126747	G	A	p.R441C	0
 *81	No Function	2	rs367543000	chr22	42128212	G	A	p.R269X	0
-*41	Reduced	3	rs28371725	chr22	42127803	C	T	Splicing Defect	1
+*41	Reduced	3	rs28371725	chr22	42127803	C	T	Splicing Defect	1	chr22:42130692:G:A
 *10	Reduced	3	rs1065852	chr22	42130692	G	A	p.P34S (Unstable protein)	0
-*14	Reduced	3	rs5030865	chr22	42129033	C	T	p.G169R	0
-*17	Reduced	3	rs28371706	chr22	42129770	G	A	p.T107I (Altered substrate binding)	0
+*14	Reduced	3	rs5030865	chr22	42129033	C	T	p.G169R	0	chr22:42130692:G:A;chr22:42126611:C:G
+*17	Reduced	3	rs28371706	chr22	42129770	G	A	p.T107I (Altered substrate binding)	0	chr22:42127941:G:A;chr22:42126611:C:G
 *54	Reduced	3	rs267608297	chr22	42128235	G	A	p.T261I	0
 *55	Reduced	3	rs1931013246	chr22	42126956	T	G	p.K404Q	0
 *59	Reduced	3	rs79292917	chr22	42127852	C	T	splicing defect	0

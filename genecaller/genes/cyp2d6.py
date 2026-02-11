@@ -24,7 +24,8 @@ class StarAlleleCaller:
             header = f.readline().strip().split("\t")
             for line in f:
                 fields = line.strip().split("\t")
-                if len(fields) < len(header):
+                required_cols = len(header) - 1  # associated_variants is optional
+                if len(fields) < required_cols:
                     continue
                 allele_data = dict(zip(header, fields))
                 allele_data["tier"] = int(allele_data["tier"])
@@ -33,8 +34,14 @@ class StarAlleleCaller:
                 except ValueError:
                     pass
                 allele_data["backbone"] = bool(int(allele_data["backbone"]))
+                assoc = allele_data.get("associated_variants", "")
+                allele_data["associated_variants"] = (
+                    [v.strip() for v in assoc.split(";") if v.strip()]
+                    if assoc
+                    else []
+                )
                 definitions.append(allele_data)
-        return sorted(definitions, key=lambda x: x["tier"])
+        return sorted(definitions, key=lambda x: (x["tier"], not x["backbone"]))
 
     def _load_backbone_variants(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         backbone = []
@@ -98,23 +105,39 @@ class StarAlleleCaller:
                     variant_counts[var_key] -= 1
                     for bb_key in backbone_keys:
                         variant_counts[bb_key] -= 1
+                    for av in allele_def.get("associated_variants", []):
+                        if variant_counts.get(av, 0) > 0:
+                            variant_counts[av] -= 1
 
-                    if variant_counts[var_key] > 0:
+                    while (
+                        variant_counts[var_key] > 0
+                        and len(called_alleles) < max_alleles
+                    ):
                         backbone_enough = all(
                             variant_counts.get(k, 0) > 0 for k in backbone_keys
                         )
-                        if backbone_enough and len(called_alleles) < max_alleles:
-                            called_alleles.append(allele_def["allele"])
-                            variant_counts[var_key] -= 1
-                            for bb_key in backbone_keys:
-                                variant_counts[bb_key] -= 1
+                        if not backbone_enough:
+                            break
+                        called_alleles.append(allele_def["allele"])
+                        variant_counts[var_key] -= 1
+                        for bb_key in backbone_keys:
+                            variant_counts[bb_key] -= 1
+                        for av in allele_def.get("associated_variants", []):
+                            if variant_counts.get(av, 0) > 0:
+                                variant_counts[av] -= 1
             else:
                 called_alleles.append(allele_def["allele"])
                 variant_counts[var_key] -= 1
+                for av in allele_def.get("associated_variants", []):
+                    if variant_counts.get(av, 0) > 0:
+                        variant_counts[av] -= 1
 
-                if variant_counts[var_key] > 0 and len(called_alleles) < max_alleles:
+                while variant_counts.get(var_key, 0) > 0 and len(called_alleles) < max_alleles:
                     called_alleles.append(allele_def["allele"])
                     variant_counts[var_key] -= 1
+                    for av in allele_def.get("associated_variants", []):
+                        if variant_counts.get(av, 0) > 0:
+                            variant_counts[av] -= 1
 
         while len(called_alleles) < max_alleles:
             called_alleles.append("*1")
