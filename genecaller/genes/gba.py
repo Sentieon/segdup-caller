@@ -3,30 +3,88 @@
 import os
 from typing import Dict, Any, List
 from genecaller.gene import Gene
+from genecaller.conversion_detector import GeneConversionDetector
 import vcflib
 
 
 class GBA(Gene):
     """GBA gene with enhanced interpretation for GBAP1 deletions and gene conversions."""
 
-    CONVERSION_VARIANTS = {
-        "L483P": {"chrom": "chr1", "pos": 155235252, "ref": "A", "alt": "G"},
-        "A495P": {"chrom": "chr1", "pos": 155235217, "ref": "C", "alt": "G"},
-        "V499V": {"chrom": "chr1", "pos": 155235203, "ref": "C", "alt": "G"},
-        "c.1263del": {
-            "chrom": "chr1",
-            "pos": 155235749,
-            "ref": "GGGACTGTCGACAAAGTTACGCACCCAATTGGGTCCTCCTTCGGGGTTCAGGGCAA",
-            "alt": "G",
-        },
-        "D409H": {"chrom": "chr1", "pos": 155235727, "ref": "C", "alt": "G"},
-        "rs708606": {"chrom": "chr1", "pos": 155234903, "ref": "C", "alt": "T"},
-    }
+    def __init__(self, cfg: dict, ref_file: str, **kwargs) -> None:
+        super().__init__(cfg, ref_file, **kwargs)
+        # Load conversion variants from database instead of hardcoding
+        self.conversion_variants = self._load_conversion_variants_from_db()
+
+    def _load_conversion_variants_from_db(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Load GBA-specific conversion variants from the conversion database.
+
+        Returns a dictionary mapping variant names to their genomic coordinates and alleles.
+        Only includes single-position variants (not complex events like RecTL or fusions).
+        """
+        if not self.conversion_db:
+            self.logger.warning(
+                "No conversion database configured; variant checking will be disabled"
+            )
+            return {}
+
+        try:
+            known_conversions = GeneConversionDetector.load_known_conversions(
+                self.conversion_db
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to load conversion database: {e}")
+            return {}
+
+        variants = {}
+        for kc in known_conversions:
+            # Only load GBA1 variants with valid ref/alt alleles
+            if kc.recipient_gene != "GBA1":
+                continue
+            if kc.ref == "NA" or kc.alt == "NA":
+                continue  # Skip complex events without single ref/alt
+
+            # Parse recipient_locus to extract chrom and position
+            # Format: "chr1:155235252" or "chr1:155235749-155235805"
+            try:
+                locus_parts = kc.recipient_locus.split(":")
+                if len(locus_parts) != 2:
+                    continue
+
+                chrom = locus_parts[0]
+                pos_str = locus_parts[1]
+
+                # For range loci (e.g., deletions), use the start position
+                if "-" in pos_str:
+                    pos = int(pos_str.split("-")[0])
+                else:
+                    pos = int(pos_str)
+
+                variants[kc.event_name] = {
+                    "chrom": chrom,
+                    "pos": pos,
+                    "ref": kc.ref,
+                    "alt": kc.alt,
+                }
+
+            except (ValueError, IndexError) as e:
+                self.logger.warning(
+                    f"Failed to parse locus for {kc.event_name}: {kc.recipient_locus} ({e})"
+                )
+                continue
+
+        self.logger.info(
+            f"Loaded {len(variants)} conversion variants from database for GBA1"
+        )
+        return variants
 
     def _check_conversion_variants(self, vcf_path: str) -> List[Dict[str, str]]:
         found_conversions = []
 
         if not os.path.exists(vcf_path):
+            return found_conversions
+
+        if not self.conversion_variants:
             return found_conversions
 
         try:
@@ -38,7 +96,7 @@ class GBA(Gene):
                 chrom = v.chrom if v.chrom.startswith("chr") else f"chr{v.chrom}"
                 pos = v.pos + 1
 
-                for var_name, var_info in self.CONVERSION_VARIANTS.items():
+                for var_name, var_info in self.conversion_variants.items():
                     if (
                         chrom == var_info["chrom"]
                         and pos == var_info["pos"]

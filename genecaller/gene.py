@@ -58,6 +58,9 @@ class IterationState:
 
 
 class GeneRegion:
+    # WARNING: These class-level defaults assume diploid baseline (cn=2)
+    # They are overridden in solve_cn() for sex-specific ploidy (e.g., male chrX = 1)
+    # DO NOT rely on these defaults - always explicitly set cn before use
     cn = 2
     cn_diff = 0
     total_cn = 2
@@ -331,9 +334,40 @@ class Gene:
     _priors: Optional[GenePriors] = None  # GenePriors instance for CN prior calculation
     converted_segments: List[GeneConversionSegment] = []
 
-    def __init__(self, cfg: dict, ref_file: str) -> None:
+    def __init__(self, cfg: dict, ref_file: str, sex: Optional[str] = None) -> None:
         self.config = cfg.get("config", {})
         self.ref = Reference(ref_file)
+
+        # Sex-specific ploidy handling for X-linked genes
+        self.requires_sex = cfg.get("requires_sex", False)
+        self.sex_chromosome = cfg.get("sex_chromosome", None)
+
+        # Validate sex input if required
+        if self.requires_sex and sex is None:
+            gene_name = cfg.get("gene_names", ["Unknown"])[0]
+            raise ValueError(
+                f"Gene {gene_name} requires --sex argument (male/female/M/F/XY/XX). "
+                f"This gene is located on chromosome {self.sex_chromosome}. "
+                f"Please provide --sex to specify sample sex."
+            )
+
+        # Determine baseline copy number (neutral ploidy) based on sex
+        if self.sex_chromosome == "X" and sex:
+            normalized_sex = self._normalize_sex(sex)
+            if normalized_sex == "male":
+                self.baseline_cn = cfg.get("baseline_cn_male", 1)
+            else:
+                self.baseline_cn = cfg.get("baseline_cn_female", 2)
+        else:
+            # Autosomal gene - always diploid
+            self.baseline_cn = cfg.get("baseline_cn", 2)
+
+        # Validate baseline_cn
+        assert self.baseline_cn in [1, 2], f"Invalid baseline_cn: {self.baseline_cn}"
+
+        # Store sample sex for potential downstream use
+        self.sample_sex = sex
+
         self.gene_strand = cfg["gene_strand"]
         self.gene_names = cfg["gene_names"]
         self.gene_regions = cfg["gene_regions"]
@@ -347,11 +381,15 @@ class Gene:
             # Default: use recombination_regions
             cnv_exclude_cfg = self.recombination_regions or []
         if cnv_exclude_cfg:
-            self.cnv_exclude_regions = IntervalList(
-                region=",".join(cnv_exclude_cfg)
-                if isinstance(cnv_exclude_cfg, list)
-                else cnv_exclude_cfg
-            )
+            # Handle [region, prior] pairs (e.g., recombination_regions)
+            if isinstance(cnv_exclude_cfg, list):
+                regions = [
+                    r[0] if isinstance(r, list) else r for r in cnv_exclude_cfg
+                ]
+                region_str = ",".join(regions)
+            else:
+                region_str = cnv_exclude_cfg
+            self.cnv_exclude_regions = IntervalList(region=region_str)
         else:
             self.cnv_exclude_regions = None
         # Save original cnv_exclude_regions for iteration toggle
@@ -415,10 +453,21 @@ class Gene:
         self._initialize_priors()
         self._initialize_longdel_priors(cfg)
 
+    @staticmethod
+    def _normalize_sex(sex: str) -> str:
+        """Normalize sex input to 'male' or 'female'."""
+        sex_lower = sex.lower()
+        if sex_lower in ["male", "m", "xy"]:
+            return "male"
+        elif sex_lower in ["female", "f", "xx"]:
+            return "female"
+        else:
+            raise ValueError(f"Invalid sex value: {sex}. Expected male/female/M/F/XY/XX")
+
     def _initialize_priors(self) -> None:
         """Initialize CN prior model using factory pattern."""
         # Create GenePriors instance using factory
-        self._priors = create_gene_priors(self.config, self.all_vars["cns"])
+        self._priors = create_gene_priors(self.config, self.all_vars["cns"], self.baseline_cn)
 
     def _initialize_longdel_priors(self, cfg: dict) -> None:
         """Pre-calculate log priors for long deletions"""
@@ -643,7 +692,7 @@ class Gene:
         result_data = {"Copy numbers": {}, "Variants": self.result_vcfs}
         cns = result_data["Copy numbers"]
         for _, v in self.all_vars["cns"].items():
-            cns[v["name"]] = 2 + v["cn_diff"]
+            cns[v["name"]] = self.baseline_cn + v["cn_diff"]
         for _, v in self.all_vars["dels"].items():
             if v["cn_diff"] != 0:  # Only report detected deletions
                 cns[v["name"]] = v["cn_diff"]
@@ -821,8 +870,9 @@ class Gene:
                     k: v for k, v in liftover_ads.items() if itv.get(self.chr, k, k + 1)
                 }
 
-        region_states = range(-2, 5)  # [-2, -1, 0, 1, 2, 3] -> 6 possibilities
-        del_states = range(-2, 1)  # [-2, -1, 0] -> 3 possibilities
+        # State ranges adjust to baseline_cn (diploid=2 or haploid=1)
+        region_states = range(-self.baseline_cn, self.baseline_cn + 3)
+        del_states = range(-self.baseline_cn, 1)
 
         # Initialize all variables to neutral state (0)
         for rid in region_ids:
@@ -1035,11 +1085,11 @@ class Gene:
         # set the called CN values for regions
         for r in self.all_regions:
             r.cn_diff = self.get_cn_diff(r.region_id, r.longdel_id)
-            r.cn = 2 + r.cn_diff
+            r.cn = self.baseline_cn + r.cn_diff
         for regions in self.segdup_regions:
             for r in regions:
                 r.cn_diff = self.get_cn_diff(r.region_id, r.longdel_id)
-                r.cn = 2 + r.cn_diff
+                r.cn = self.baseline_cn + r.cn_diff
         for regions in self.liftover_segdup_regions:
             for r in regions:
                 diffs = [
@@ -1047,7 +1097,7 @@ class Gene:
                     for j in range(len(r.orig_region_id))
                 ]
                 r.cn_diff = sum(diffs)
-                r.cn = 2 * len(self.liftover_segdup_regions) + r.cn_diff
+                r.cn = self.baseline_cn * len(self.liftover_segdup_regions) + r.cn_diff
         self.merged_regions = GeneRegion.merge_by_cn(self.all_regions)
         self.merged_segdup_regions = [
             GeneRegion.merge_by_cn(regions) for regions in self.segdup_regions
@@ -1076,7 +1126,7 @@ class Gene:
             if 0 in self.all_vars["cns"]:
                 region_name = self.all_vars["cns"][0]["name"]
                 cn_diff = self.all_vars["cns"][0]["cn_diff"]
-                cn = cn_diff + 2
+                cn = cn_diff + self.baseline_cn
                 prior = (
                     self._priors.get_log_prior(cn, region_name) if self._priors else 0.0
                 )
@@ -1087,7 +1137,7 @@ class Gene:
                 if (region_id >> i) & 1 and i in self.all_vars["cns"]:
                     region_name = self.all_vars["cns"][i]["name"]
                     cn_diff = self.all_vars["cns"][i]["cn_diff"]
-                    cn = cn_diff + 2
+                    cn = cn_diff + self.baseline_cn
                     prior += (
                         self._priors.get_log_prior(cn, region_name)
                         if self._priors
@@ -1143,7 +1193,7 @@ class Gene:
             if mq_region.size() < min_region_size:
                 continue
             cn_diff = self.get_cn_diff(r.region_id, r.longdel_id)
-            cn = cn_diff + 2
+            cn = cn_diff + self.baseline_cn
 
             # Calculate CN prior (for the final copy number)
             # Use region-specific priors if available (via region name)
@@ -1152,10 +1202,11 @@ class Gene:
             # Note: longdel priors are now calculated once per event above,
             # not per sub-region here
             region_prob = bam.calc_logprob(
-                mq_region.to_region_str(), cn, log_prior=cn_log_prior
+                mq_region.to_region_str(), cn, log_prior=cn_log_prior,
+                baseline_cn=self.baseline_cn
             )
             total_prob += region_prob
-        cn_neutral = 2 * len(self.liftover_segdup_regions)
+        cn_neutral = self.baseline_cn * len(self.liftover_segdup_regions)
         for regions in self.liftover_segdup_regions:
             for r in regions:
                 diffs = [
@@ -1173,7 +1224,7 @@ class Gene:
                 cn_total = cn_neutral + sum(diffs)
                 log_prior = sum(cn_log_priors)
                 diff0 = diffs[0]
-                ratio = (2 + diff0) / cn_total if cn_total else 0
+                ratio = (self.baseline_cn + diff0) / cn_total if cn_total else 0
                 # Pass conversion N values if available (for iterative CNV-conversion)
                 conversion_n_values = getattr(self, "_conversion_n_values", None)
                 liftover_prob = liftover_bam.calc_logprob(
@@ -1183,12 +1234,22 @@ class Gene:
                     ratio,
                     log_prior=log_prior,
                     conversion_n_values=conversion_n_values,
+                    baseline_cn=self.baseline_cn,
                 )
                 total_prob += liftover_prob
 
         # Add longdel priors once for the entire calculation
         total_prob += total_longdel_prior
+        total_prob += self.cn_constraint_penalty()
         return total_prob
+
+    def cn_constraint_penalty(self) -> float:
+        """Return a log-likelihood penalty for biologically implausible CN states.
+
+        Override in gene-specific subclasses to add soft constraints.
+        Returns 0.0 (no penalty) by default.
+        """
+        return 0.0
 
     def call_cn(self, read_data: Dict[str, Any], params: Dict[str, Any]) -> None:
         self.read_data = read_data

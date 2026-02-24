@@ -54,8 +54,8 @@ class PMS2(Gene):
     MAX_GAP_TOLERANCE = 500
     TOTAL_CN = 4
 
-    def __init__(self, cfg: dict, ref_file: str) -> None:
-        super().__init__(cfg, ref_file)
+    def __init__(self, cfg: dict, ref_file: str, **kwargs) -> None:
+        super().__init__(cfg, ref_file, **kwargs)
         self.logger = get_logger(__name__)
         self.manifest_blocks: List[Dict] = []
         self.site_to_block: Dict[int, int] = {}

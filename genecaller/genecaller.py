@@ -56,12 +56,18 @@ def process_single_gene(gene_data: tuple) -> Dict:
 
     try:
         # Apply gene-specific dp_norm if configured
-        if gene_config and "dp_norm" in gene_config:
-            read_data["short_read"]["bam"].dp_norm = gene_config["dp_norm"]
+        dp_norm = gene_config.get("dp_norm") if gene_config else None
 
         # Liftover
         gene_logger.info("Performing liftover...")
         _perform_liftover(gene, read_data, ref)
+
+        # Apply dp_norm to both original and liftover BAMs
+        if dp_norm is not None:
+            for rd in read_data.values():
+                rd["bam"].dp_norm = dp_norm
+                if "liftover" in rd:
+                    rd["liftover"].dp_norm = dp_norm
 
         # Configure variant calling parallelism for this gene
         gene.variant_call_threads = min(
@@ -294,6 +300,12 @@ class GeneCaller:
             default=False,
             help=argparse.SUPPRESS,
         )
+        parser.add_argument(
+            "--sex",
+            choices=["male", "female", "M", "F", "XY", "XX"],
+            help="Sample sex for X-linked genes (required for non-PAR genes like IKBKG). "
+            "Accepted values: male/M/XY or female/F/XX (case-insensitive)",
+        )
         args = parser.parse_args()
 
         # Setup tools after argument parsing (so --version and --help work without dependencies)
@@ -344,7 +356,9 @@ class GeneCaller:
         # Instantiate genes using gene-specific classes if available
         self.input = args.short, args.long
         self.ref = args.reference
-        self.genes = [get_gene_class(g)(config[g], self.ref) for g in genes]
+        # Extract sex argument (if provided)
+        sex = getattr(args, 'sex', None)
+        self.genes = [get_gene_class(g)(config[g], self.ref, sex=sex) for g in genes]
 
         if args.threads > cpu_count():
             logger.warning(

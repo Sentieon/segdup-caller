@@ -13,9 +13,10 @@ from genecaller.logging import get_logger
 class GenePriors(ABC):
     """Base class for gene copy number priors."""
 
-    def __init__(self, config: Dict[str, Any], cn_regions: Dict[int, Dict[str, Any]]):
+    def __init__(self, config: Dict[str, Any], cn_regions: Dict[int, Dict[str, Any]], baseline_cn: int = 2):
         self.config = config
         self.cn_regions = cn_regions
+        self.baseline_cn = baseline_cn
         self.logger = logging.getLogger(self.__class__.__name__)
 
     @abstractmethod
@@ -25,10 +26,10 @@ class GenePriors(ABC):
 
 
 class GaussianPriors(GenePriors):
-    """Gaussian-based copy number priors centered at diploid (CN=2)."""
+    """Gaussian-based copy number priors centered at baseline_cn (diploid=2, haploid=1)."""
 
-    def __init__(self, config: Dict[str, Any], cn_regions: Dict[int, Dict[str, Any]]):
-        super().__init__(config, cn_regions)
+    def __init__(self, config: Dict[str, Any], cn_regions: Dict[int, Dict[str, Any]], baseline_cn: int = 2):
+        super().__init__(config, cn_regions, baseline_cn)
         self.cn_prior_std = config.get("cn_prior_std", 2.0)
 
         # Pre-calculate log priors for CN 0-8
@@ -36,15 +37,15 @@ class GaussianPriors(GenePriors):
         for cn in range(9):
             self._cached_log_priors[cn] = self._calculate_log_prior(cn)
 
-        self.logger.debug(f"Using Gaussian CN priors with std={self.cn_prior_std}")
+        self.logger.debug(f"Using Gaussian CN priors with baseline={self.baseline_cn}, std={self.cn_prior_std}")
 
     def _calculate_log_prior(self, cn: int) -> float:
         if cn <= 0:
-            upper = scipy.stats.norm.cdf(0.5, loc=2, scale=self.cn_prior_std)
+            upper = scipy.stats.norm.cdf(0.5, loc=self.baseline_cn, scale=self.cn_prior_std)
             prob = upper
         else:
-            upper = scipy.stats.norm.cdf(cn + 0.5, loc=2, scale=self.cn_prior_std)
-            lower = scipy.stats.norm.cdf(cn - 0.5, loc=2, scale=self.cn_prior_std)
+            upper = scipy.stats.norm.cdf(cn + 0.5, loc=self.baseline_cn, scale=self.cn_prior_std)
+            lower = scipy.stats.norm.cdf(cn - 0.5, loc=self.baseline_cn, scale=self.cn_prior_std)
             prob = upper - lower
         return np.log(max(float(prob), 1e-10))
 
@@ -62,8 +63,8 @@ class CategoricalPriors(GenePriors):
     - Region-level: cn_priors: {CFH: {0: 0.001, 1: 0.01, 2: 0.98}, CFH31: {0: 0.05, 1: 0.15, 2: 0.79}}
     """
 
-    def __init__(self, config: Dict[str, Any], cn_regions: Dict[int, Dict[str, Any]]):
-        super().__init__(config, cn_regions)
+    def __init__(self, config: Dict[str, Any], cn_regions: Dict[int, Dict[str, Any]], baseline_cn: int = 2):
+        super().__init__(config, cn_regions, baseline_cn)
 
         priors_config = config["cn_priors"]
 
@@ -155,8 +156,8 @@ class CategoricalPriors(GenePriors):
 class GammaPriors(GenePriors):
     """Gamma-like distribution priors for copy number."""
 
-    def __init__(self, config: Dict[str, Any], cn_regions: Dict[int, Dict[str, Any]]):
-        super().__init__(config, cn_regions)
+    def __init__(self, config: Dict[str, Any], cn_regions: Dict[int, Dict[str, Any]], baseline_cn: int = 2):
+        super().__init__(config, cn_regions, baseline_cn)
 
         self.gamma_shape = config.get("gamma_shape", 4.0)
         self.gamma_scale = config.get("gamma_scale", 0.5)
@@ -194,7 +195,7 @@ class GammaPriors(GenePriors):
 
 
 def create_gene_priors(
-    config: Dict[str, Any], cn_regions: Dict[int, Dict[str, Any]]
+    config: Dict[str, Any], cn_regions: Dict[int, Dict[str, Any]], baseline_cn: int = 2
 ) -> GenePriors:
     """Factory method to create appropriate GenePriors instance."""
     prior_type = config.get("prior_type", "gaussian")
@@ -203,11 +204,11 @@ def create_gene_priors(
         prior_type = "categorical"
 
     if prior_type == "categorical":
-        return CategoricalPriors(config, cn_regions)
+        return CategoricalPriors(config, cn_regions, baseline_cn)
     elif prior_type == "gamma":
-        return GammaPriors(config, cn_regions)
+        return GammaPriors(config, cn_regions, baseline_cn)
     else:
-        return GaussianPriors(config, cn_regions)
+        return GaussianPriors(config, cn_regions, baseline_cn)
 
 
 @dataclass
@@ -625,6 +626,7 @@ class HMMSEGGeneSegmenter(GeneSegmenter):
         # Get transition rates - support both legacy single rate and new dual rates
         legacy_transition_rate = float(params.get("transition_rate", 0.01))
         self.transition_rate_background = float(params.get("transition_rate_background", legacy_transition_rate))
+        # Default hotspot rate (used if rate not specified for a region)
         self.transition_rate_hotspot = float(params.get("transition_rate_hotspot", legacy_transition_rate))
 
         # Store for logging
@@ -633,33 +635,85 @@ class HMMSEGGeneSegmenter(GeneSegmenter):
         # Parse recombination regions if provided
         self.recombination_regions = params.get("recombination_regions", None)
         self.hotspot_intervals = None
+        self.hotspot_rates = {}  # Map: rate -> IntervalList of regions with that rate
 
         if self.recombination_regions:
             # Parse recombination regions into IntervalList for efficient lookup
             from .util import IntervalList
 
-            # Convert list of region strings to comma-separated format
-            if isinstance(self.recombination_regions, list):
-                region_str = ",".join(self.recombination_regions)
-            else:
-                region_str = self.recombination_regions
-            self.hotspot_intervals = IntervalList(region=region_str)
-            self.logger.debug(
-                f"  Recombination hotspots configured: {self.recombination_regions}"
-            )
-            self.logger.debug(
-                f"  Transition rates: background={self.transition_rate_background:.2e}, hotspot={self.transition_rate_hotspot:.2e}"
-            )
+            # Handle different formats for recombination_regions:
+            # 1. Comma-separated string: "region1,region2"
+            # 2. List of strings: ["region1", "region2"]
+            # 3. List of mixed types: ["region1", ["region2", rate]]
+            
+            default_regions = []
+            
+            if isinstance(self.recombination_regions, str):
+                default_regions.extend(self.recombination_regions.split(","))
+            elif isinstance(self.recombination_regions, list):
+                for item in self.recombination_regions:
+                    if isinstance(item, str):
+                        default_regions.append(item)
+                    elif isinstance(item, (list, tuple)) and len(item) == 2:
+                        region_str, rate = item
+                        rate = float(rate)
+                        if rate not in self.hotspot_rates:
+                            self.hotspot_rates[rate] = []
+                        self.hotspot_rates[rate].append(region_str)
+                    else:
+                        self.logger.warning(f"Invalid recombination region format: {item}")
 
-        # Precompute log transition probability matrices
-        self.log_trans_matrix_cold = self._build_trans_matrix(
+            # Combine default regions into one IntervalList
+            if default_regions:
+                # Use default hotspot rate for these regions
+                rate = self.transition_rate_hotspot
+                if rate not in self.hotspot_rates:
+                    self.hotspot_rates[rate] = []
+                self.hotspot_rates[rate].extend(default_regions)
+
+            # Convert lists of strings to IntervalLists
+            for rate in self.hotspot_rates:
+                self.hotspot_rates[rate] = IntervalList(region=",".join(self.hotspot_rates[rate]))
+            
+            # Create a combined IntervalList for quick overlap check
+            all_regions = []
+            for rate_intervals in self.hotspot_rates.values():
+                all_regions.append(rate_intervals.to_region_str())
+            self.hotspot_intervals = IntervalList(region=",".join(filter(None, all_regions)))
+
+            self.logger.debug(
+                f"  Recombination hotspots configured with {len(self.hotspot_rates)} unique rates"
+            )
+            for rate, intervals in self.hotspot_rates.items():
+                self.logger.debug(f"    Rate {rate}: {intervals.to_region_str()}")
+
+        # Precompute log transition probability matrices for all unique rates + background
+        self.log_trans_matrices = {}
+        
+        # Background
+        self.log_trans_matrices[self.transition_rate_background] = self._build_trans_matrix(
             self.transition_rate_background
         )
-        self.log_trans_matrix_hot = self._build_trans_matrix(
-            self.transition_rate_hotspot
-        )
+        
+        # Hotspots
+        if self.hotspot_rates:
+            for rate in self.hotspot_rates:
+                if rate not in self.log_trans_matrices:
+                     self.log_trans_matrices[rate] = self._build_trans_matrix(rate)
+        else:
+             # If no regions, precompute default hotspot anyway (legacy behavior/fallback)
+             self.log_trans_matrices[self.transition_rate_hotspot] = self._build_trans_matrix(
+                self.transition_rate_hotspot
+            )
 
-        # For backward compatibility, keep single matrix reference
+        # For backward compatibility / legacy access
+        self.log_trans_matrix_cold = self.log_trans_matrices[self.transition_rate_background]
+        self.log_trans_matrix_hot = self.log_trans_matrices.get(
+            self.transition_rate_hotspot, 
+            self._build_trans_matrix(self.transition_rate_hotspot)
+        )
+        
+        # For backward compatibility loop access
         self.log_trans_matrix = self.log_trans_matrix_cold
 
     def _build_trans_matrix(self, transition_rate):
@@ -673,16 +727,51 @@ class HMMSEGGeneSegmenter(GeneSegmenter):
         np.fill_diagonal(matrix, log_stay)
         return matrix
 
+    def _get_transition_rate(self, position, chrom=None):
+        """Get transition rate for a position specifically."""
+        if not self.hotspot_rates:
+             return self.transition_rate_background
+             
+        # Check specific rate regions
+        # We need chromosome context if available, but signals typically from same chromosome
+        # If no chrome info passed, check all chromosomes in the interval lists (inefficient but safe)
+        if hasattr(self, "chrom") and self.chrom:
+             chrom = self.chrom
+             
+        # Optimization: check if in ANY hotspot first (using the merged interval list)
+        if not self._is_hotspot(position):
+             return self.transition_rate_background
+
+        # Find specific rate
+        for rate, interval_list in self.hotspot_rates.items():
+            if chrom:
+                 if (chrom, position) in interval_list:
+                     return rate
+            else:
+                 # Check all chromosomes
+                 for c in interval_list.regions:
+                      if (c, position) in interval_list:
+                           return rate
+                           
+        return self.transition_rate_background
+        
     def _is_hotspot(self, position):
         """Check if a position falls within a recombination hotspot."""
         if self.hotspot_intervals is None:
             return False
         # IntervalList.__contains__ with tuple checks if position is in any interval
         # Need to extract chromosome from signals - assuming all signals are from same chromosome
-        if not self.signals:
-            return False
-        # IntervalList stores regions by chromosome, we need to know which chromosome
-        # For now, check all chromosomes in the hotspot_intervals
+        # We can try to get chromosome from first signal if we haven't stored it
+        chrom = None
+        if hasattr(self, "chrom") and self.chrom:
+            chrom = self.chrom
+        elif self.signals and hasattr(self.signals[0], "chrom"): # Signal doesn't have chrom?
+             chrom = self.signals[0].chrom
+        
+        if chrom:
+             return (chrom, position) in self.hotspot_intervals
+        
+        # Fallback: check all chromosomes
         for chrom in self.hotspot_intervals.regions:
             if (chrom, position) in self.hotspot_intervals:
                 return True
@@ -784,11 +873,13 @@ class HMMSEGGeneSegmenter(GeneSegmenter):
             )
 
             # Select transition matrix based on current position
-            if self._is_hotspot(signals[t].position):
-                current_trans_matrix = self.log_trans_matrix_hot
+            # Select transition matrix based on current position
+            rate = self._get_transition_rate(signals[t].position)
+            current_trans_matrix = self.log_trans_matrices[rate]
+            
+            if rate != self.transition_rate_background:
                 hotspot_transitions += 1
             else:
-                current_trans_matrix = self.log_trans_matrix_cold
                 background_transitions += 1
 
             scores_matrix = log_V[t - 1, :, np.newaxis] + current_trans_matrix

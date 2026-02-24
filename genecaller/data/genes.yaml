@@ -153,6 +153,55 @@ PMS2:
       PMS2_exon13-15.DEL: 2.0e-4     # Most common pathogenic PMS2 CNV (0.02%)
       PMS2_exon14.DEL: 5.0e-5        # Focal deletion, ~10-15% of pathogenic CNVs (0.005%)
       PMS2_exon10.DEL: 2.0e-5        # Founder mutation, ~5-10% of pathogenic CNVs (0.002%)
+RCCX:
+  gene_strand: "+"
+  diff_vcf:
+  - data/RCCX1.vcf.gz
+  - data/RCCX2.vcf.gz
+  gene_names:
+  - RCCX1
+  - RCCX2
+  gene_regions:
+  - chr6:32013270-32109400
+  - chr6:31980000-32012472
+  liftover_regions:
+  - - RCCX1
+    - chr6:32013270-32045326
+  - - RCCX2
+    - chr6:31980532-32012472
+  cn_regions:
+   - [C4A, chr6:31981991-32004877]
+   - [CYP21A1P, chr6:32005689-32008399]
+   - [TNXA, chr6:32008614-32012472]
+   - [C4B, chr6:32014730-32035973]
+   - [CYP21A2, chr6:32038265-32041153]
+   - [TNXB, chr6:32041153-32109400]
+  longdel:
+   - [C4A_HERV-K, chr6:31984695-31991052]
+   - [C4B_HERV-K, chr6:32017433-32023790]
+  cnv_exclude_regions:
+  - chr6:32038200-32038600
+  - chr6:32039100-32039400
+  - chr6:32040100-32040600
+  - chr6:32041100-32045326
+  - chr6:32005465-32005866
+  - chr6:32006372-32006664
+  - chr6:32007364-32007865
+  - chr6:32008365-32012472
+  conversion_regions:
+  - region: "chr6:32041153-32045326"
+    fusion_detection: false
+  - region: "chr6:32038000-32041153"
+    fusion_detection: false
+  recombination_regions:
+  - [chr6:32038200-32038600, 5e-4]
+  - [chr6:32039100-32039400, 1e-3]
+  - [chr6:32040100-32040600, 5e-4]
+  - [chr6:32041100-32041200, 2e-3]
+  - [chr6:32041200-32045326, 1e-4]
+  map: data/RCCX1_RCCX2.dat
+  config:
+   dp_norm: 1.1
 SMN1:
   gene_strand: "+"
   diff_vcf:

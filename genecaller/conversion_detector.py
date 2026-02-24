@@ -432,7 +432,7 @@ class GeneConversionDetector:
         Load known gene conversion events from a database file.
 
         Expected format:
-        ##file_format=KnownGeneConversionDB_v1.0
+        ##file_format=KnownGeneConversionDB_v1.1
         ##reference_genome=GRCh38
         ##description=A database of known gene conversion events (complex alleles) and their signature variants.
         ##column_definitions=<ID=event_name,Description="Common name or ID for the conversion event">
@@ -443,9 +443,11 @@ class GeneConversionDetector:
         ##column_definitions=<ID=signature_variants,Description="Pipe-separated list of signature variant IDs">
         ##column_definitions=<ID=event_type,Description="CONVERSION or FUSION (optional, default: CONVERSION)">
         ##column_definitions=<ID=min_match_threshold,Description="Minimum match fraction 0.0-1.0 (optional, default: 0.8)">
-        #event_name	recipient_gene	recipient_locus	donor_gene	donor_locus	signature_variants	event_type	min_match_threshold
+        ##column_definitions=<ID=ref,Description="Reference allele (optional, NA for complex events)">
+        ##column_definitions=<ID=alt,Description="Alternate allele (optional, NA for complex events)">
+        #event_name	recipient_gene	recipient_locus	donor_gene	donor_locus	signature_variants	event_type	min_match_threshold	ref	alt
 
-        Note: event_type and min_match_threshold columns are optional for backward compatibility.
+        Note: event_type, min_match_threshold, ref, and alt columns are optional for backward compatibility.
 
         Args:
             db_file: Path to the known conversion database file
@@ -487,6 +489,8 @@ class GeneConversionDetector:
                     # Optional fields (backward compatible)
                     event_type = fields[6] if len(fields) > 6 else "CONVERSION"
                     min_match_threshold = float(fields[7]) if len(fields) > 7 else 0.8
+                    ref = fields[8] if len(fields) > 8 else "NA"
+                    alt = fields[9] if len(fields) > 9 else "NA"
 
                     # Parse signature variants (pipe-separated list of variant IDs)
                     # Handle "NA" or empty string as no signature variants
@@ -508,6 +512,8 @@ class GeneConversionDetector:
                         signature_variant_ids=variant_ids,
                         event_type=event_type,
                         min_match_threshold=min_match_threshold,
+                        ref=ref,
+                        alt=alt,
                     )
                     known_conversions.append(known_conversion)
 
@@ -697,3 +703,5 @@ class KnownConversion:
     signature_variant_ids: list[str]
     event_type: str = "CONVERSION"  # "CONVERSION" or "FUSION"
     min_match_threshold: float = 0.8  # Can be lower for fusions (e.g., 0.6)
+    ref: str = "NA"  # Reference allele (NA for complex events)
+    alt: str = "NA"  # Alternate allele (NA for complex events)

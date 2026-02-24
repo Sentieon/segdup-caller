@@ -171,10 +171,32 @@ class Bam:
     def phase_vcf(self, in_vcf: str, out_vcf: str, ploidy: int = 2) -> None:
         if self.use_existing and os.path.exists(out_vcf) and os.path.getsize(out_vcf):
             return
+
+        # Haploid (ploidy=1) does not require phasing - create symlink instead
+        if ploidy == 1:
+            # Create symlink from input VCF to output VCF (phasing not needed)
+            if os.path.exists(out_vcf):
+                os.remove(out_vcf)
+            os.symlink(os.path.abspath(in_vcf), out_vcf)
+            # Also symlink the index if it exists
+            in_vcf_idx = in_vcf + ".tbi"
+            out_vcf_idx = out_vcf + ".tbi"
+            if os.path.exists(in_vcf_idx):
+                if os.path.exists(out_vcf_idx):
+                    os.remove(out_vcf_idx)
+                os.symlink(os.path.abspath(in_vcf_idx), out_vcf_idx)
+            else:
+                # Index doesn't exist, create it
+                cmd = f"{self.sentieon} util vcfindex {out_vcf}"
+                result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+                result.check_returncode()
+            return
+
         bam = self.clipped_bam if self.clipped_bam else self.bam
         if ploidy == 2:
             cmd = f"{self.whatshap} phase -o {out_vcf} {in_vcf} {bam} --reference {self.ref}"
         else:
+            # For ploidy > 2, use polyphase
             cmd = f"{self.whatshap} polyphase -o {out_vcf} {in_vcf} {bam} -p {ploidy} --reference {self.ref} -B 5 -t {self.threads}"
         result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
         result.check_returncode()
@@ -713,8 +735,9 @@ class Bam:
         w_ad: float = 0.5,  # weight for the allele depth (AD) evidence
         log_prior: float = 0.0,  # log prior for CN
         conversion_n_values: Optional[Dict[int, int]] = None,  # position -> N value
+        baseline_cn: int = 2,  # baseline ploidy for depth normalization
     ) -> float:
-        probe_depths = [2 * d.mean for d in self.get_depth(region)]
+        probe_depths = [baseline_cn * d.mean for d in self.get_depth(region)]
         num_probes = len(probe_depths)
         if num_probes == 0:
             return log_prior
@@ -873,6 +896,8 @@ class CopyNumberModel:
                 and len(v.alt) == 1
                 and len(v.alt[0]) == 1
             ):
+                if v.info.get("EXCLUDECN", 0):
+                    continue
                 pileuprec = bam.get_pileup(v.chrom, v.pos)
                 if pileuprec is None:
                     continue
