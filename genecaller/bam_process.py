@@ -422,7 +422,7 @@ class Bam:
             self.init_bamh()
         out_bamh = self.init_outbamh(out_bam)
         for region in regions.split(","):
-            _, _, start, end = self.bamh.parse_region(region=region)
+            start, end = [int(s) for s in region.split(":")[1].split("-")]
             for read in self.bamh.fetch(region=region):
                 if not read.query_sequence:
                     continue
