@@ -473,7 +473,6 @@ class Bam:
         self.bamh.close()
         self.bamh = None
         out_bamh.close()
-        pysam.index(out_bam)
 
     def make_fasta(self, ref_file: str, region: str) -> list[str]:
         make_ref_cmd = (
@@ -590,7 +589,8 @@ class Bam:
             #     if "_" not in v["SN"] and "*" not in v["SN"]
             # ]
             # sq = "\n".join(sq_field)
-            cmd = f"{self.samtools} view -F 0x100 -F 0x200 -F 0x800 -h --reference {self.ref} {input_bam} {extract} |"
+            regions_arg = "" if crop_first else extract
+            cmd = f"{self.samtools} view -F 0x100 -F 0x200 -F 0x800 -h --reference {self.ref} {input_bam} {regions_arg} |"
             cmd += f"{self.samtools} fastq -t |"
             cmd += f'{self.sentieon} minimap2 -y -a -x {x} -R "{rg}" {realign_ref} /dev/stdin |'
             cmd += f"{self.sentieon} util sort -o {liftover_tmp_bam} --sam2bam -i -"

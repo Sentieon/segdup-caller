@@ -394,7 +394,7 @@ class Gene:
             self.cnv_exclude_regions = None
         # Save original cnv_exclude_regions for iteration toggle
         self._original_cnv_exclude_regions = self.cnv_exclude_regions
-        self.result_vcfs = []
+        self.result_vcfs = ""
         self.diff_vcf = [get_data_file(p) for p in cfg["diff_vcf"]]
         assert all(self.diff_vcf)
         mapping_file = get_data_file(cfg["map"])
