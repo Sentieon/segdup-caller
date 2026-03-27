@@ -1592,9 +1592,18 @@ class Gene:
             for v in out_vcf1:
                 heapq.heappush(all_vars, (v.pos, f"{v.ref}_{','.join(v.alt)}", v))
         # output all variants
+        # Find a region with an "orig" phased VCF to use as header template
+        header_vcf_fname = None
+        for r in self.merged_regions:
+            header_vcf_fname = r.phased_vcf.get("short_read", {}).get("orig")
+            if header_vcf_fname:
+                break
+        if header_vcf_fname is None:
+            self.logger.warning("No orig phased VCF found for header template")
+            return
         out_vcf_fname = f"{params['outdir']}/{params['sample_name']}.{self.gene_names[0]}.result.vcf.gz"
         out_vcf = vcflib.VCF(out_vcf_fname, "w")
-        diff_vcf = vcflib.VCF(self.merged_regions[0].phased_vcf["short_read"]["orig"])
+        diff_vcf = vcflib.VCF(header_vcf_fname)
         out_vcf.copy_header(
             diff_vcf,
             update='##ALT=<ID=DEL,Description="Deletion relative to the reference">',
