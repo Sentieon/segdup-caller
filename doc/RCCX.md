@@ -1,5 +1,20 @@
 # RCCX Module Interpretation
 
+## What This Module Does
+
+The RCCX module performs:
+
+- **RCCX module counting**: Determines total RCCX module count and individual copy numbers for C4A, C4B, CYP21A2, CYP21A1P, TNXB, and TNXA.
+- **C4 structural typing**: Resolves C4 Long/Short (HERV-K) status and detects C4A↔C4B isotype switching events.
+- **CYP21 chimera detection**: Classifies CYP21A1P/A2 conversion events into 3 tiers (microconversion, boundary conversion, 30kb deletion chimera) for CAH diagnosis.
+- **TNX/CAH-X detection**: Identifies TNXA→TNXB chimeric events associated with Ehlers-Danlos Syndrome.
+- **Small variant calling**: Calls variants in the RCCX locus using liftover and phasing.
+- Validated via population genetics consistency against established epidemiological expectations (HWE, carrier frequencies) on 212 HPRC samples. Assembly-based ground truth is unreliable for RCCX due to systematic collapse in current assemblies.
+
+The RCCX module does **not** perform:
+
+- **Gene conversion detection for C4**: C4A/C4B isotype differences are handled as structural typing rather than gene conversion events.
+
 ## Overview
 
 The RCCX (Repeat C4-CYP21-TNX) module is a complex tandem repeat on chromosome 6p21.3 within the MHC class III region. Each module contains three gene units:

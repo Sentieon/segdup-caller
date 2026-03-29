@@ -2,6 +2,16 @@
 
 > **See [general.md](general.md) for overall methodology, output file formats, validation approach, and usage instructions.**
 
+## What This Module Does
+
+The PMS2 module performs:
+
+- **Copy number calling**: Determines copy numbers for PMS2 and PMS2CL regions, including detection of exon 13-15 deletions.
+- **Gene conversion detection**: Identifies pathogenic (PMS2CL→PMS2) and benign (PMS2→PMS2CL) conversion events using haplotype-aware PSV markers trained on HPRC v2.0. Validated at 99.4% precision and 97.7-98.9% recall on 175 high-quality HPRC v2.0 samples.
+- **Fusion/recombinant detection**: Detects recombinant alleles where conversion extends to the 3' terminus boundary.
+- **Reciprocal swap detection**: Identifies unequal reciprocal exchanges between PMS2 and PMS2CL using haplotype-aware allele mismatch patterns.
+- **Small variant calling**: Calls variants in the PMS2/PMS2CL locus using liftover and phasing.
+
 ## Overview
 
 PMS2 (PMS1 homolog 2, mismatch repair system component) is a DNA mismatch repair gene associated with Lynch syndrome. The PMS2 gene cluster on chromosome 7p22.1 contains the functional PMS2 gene and its highly homologous pseudogene PMS2CL with ~98% sequence identity in exons 11-15.
