@@ -28,17 +28,19 @@ Segdup caller supports additional long-read data from **PacBio HiFi** or **Oxfor
 
 Segdup caller currently supports the following genes and segmental duplication regions:
 
-| Region Name | Genes Encoded                        |
-|-------------|--------------------------------------|
-| SMN1        | SMN1, SMN2                           |
-| PMS2        | PMS2, PMS2CL                         |
-| CYP2D6      | CYP2D6, CYP2D7                       |
-| GBA         | GBA1, GBAP1                          |
-| STRC        | STRC, STRCP1                         |
-| NCF1        | NCF1, NCF1B                          |
-| CFH         | CFH, CFHR1, CFHR2, CFHR3, CFHR4      |
-| CYP11B1     | CYP11B1, CYP11B2                     |
-| HBA         | HBA1, HBA2                           |
+| Region Name | Genes Encoded                        | Key Outputs |
+|-------------|--------------------------------------|-------------|
+| SMN1        | SMN1, SMN2                           | CN, variants |
+| PMS2        | PMS2, PMS2CL                         | CN, variants, gene conversion |
+| CYP2D6      | CYP2D6, CYP2D7                       | CN, variants, gene conversion, star alleles |
+| GBA         | GBA1, GBAP1                          | CN, variants, gene conversion |
+| STRC        | STRC, STRCP1                         | CN, variants |
+| NCF1        | NCF1, NCF1B                          | CN, variants |
+| CFH         | CFH, CFHR1, CFHR2, CFHR3, CFHR4      | CN, variants |
+| CYP11B1     | CYP11B1, CYP11B2                     | CN, variants, gene conversion |
+| HBA         | HBA1, HBA2                           | CN, variants |
+| RCCX        | RCCX1 (CYP21A2), RCCX2 (CYP21A1P)   | CN, variants, gene conversion |
+| IKBKG       | IKBKG (NEMO), IKBKGP1               | CN, gene conversion (5' region only) |
 
 > **Note:** Segdup caller is expanding the list of supported genes. If there are particular genes you hope to support, or you encounter any issues, please [file an issue](https://github.com/Sentieon/segdup-caller/issues).
 
@@ -100,7 +102,7 @@ Targeted variant caller for genes with highly similar paralogs.
   --genes GENES, -g GENES   List of genes to be called (comma separated).
                             If not specified, all supported genes will be called.
                             Supported genes: CFH, CFHR3, CYP11B1, CYP2D6, GBA,
-                            NCF1, PMS2, SMN1, STRC, HBA
+                            HBA, IKBKG, NCF1, PMS2, RCCX, SMN1, STRC
 
   --sample_name SAMPLE_NAME Sample name (default: SM tag in the input short-read
                             BAM file will be used)

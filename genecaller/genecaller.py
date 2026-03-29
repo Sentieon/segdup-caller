@@ -85,13 +85,16 @@ def process_single_gene(gene_data: tuple) -> Dict:
             gene.merge_regions_by_cn()
             gene.detect_gene_conversions()
 
-        # Variant calling
-        if not params.get("skip_variant_call", False):
+        # Variant calling (can be skipped globally via CLI or per-gene via config)
+        skip_var = params.get("skip_variant_call", False) or gene.config.get(
+            "skip_variant_call", False
+        )
+        if not skip_var:
             gene_logger.info("Call small variants...")
             gene.call_small_var()
             gene.resolve_phased(params)
         else:
-            gene_logger.info("Skipping small variant calling (--skip-variant-call)")
+            gene_logger.info("Skipping small variant calling")
 
         # Prepare output
         gene_logger.info("Prepare final output")

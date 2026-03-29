@@ -1,13 +1,22 @@
 from genecaller.gene_model import (
     CBSGeneSegmenter,
+    GeneConversionSegment,
     HMMSEGGeneSegmenter,
     PELTGeneSegmenter,
+    RatioTestSegmenter,
     calc_conversion_signals,
 )
 from genecaller.logging import get_logger
+from genecaller.util import IntervalList
 import vcflib
 from typing import Optional
 from dataclasses import dataclass
+
+_RC = {"A": "T", "C": "G", "T": "A", "G": "C", "N": "N"}
+
+
+def _rc(seq: str) -> str:
+    return "".join([_RC[s] for s in seq[-1::-1]])
 
 
 class GeneConversionDetector:
@@ -28,6 +37,7 @@ class GeneConversionDetector:
         self.copy_numbers = self.config.get("copy_numbers", [])
         self.total_copy_number = sum(self.copy_numbers)
         self.min_num_signals = self.config.get("min_num_signals", 2)
+        self.include_softclips = self.config.get("include_softclips", False)
 
         # Fusion detection parameters (default: disabled)
         self.fusion_detection = self.config.get("fusion_detection", False)
@@ -120,8 +130,48 @@ class GeneConversionDetector:
             self.segmenter = HMMSEGGeneSegmenter(self.signals, params)
         elif method == "PELT":
             self.segmenter = PELTGeneSegmenter(self.signals, params)
+        elif method == "ratio_test":
+            self.segmenter = RatioTestSegmenter(self.signals, params)
         else:
             raise ValueError(f"Unknown segmentation method: {method}")
+
+    def _get_liftover_valid_itv(self):
+        """Build a combined IntervalList of all liftover_valid regions."""
+        liftover_valid = self.gene.read_data.get("short_read", {}).get("liftover_valid")
+        if not liftover_valid:
+            return None
+        valid_str = ",".join(r for r in liftover_valid if r)
+        if not valid_str:
+            return None
+        return IntervalList(region=valid_str)
+
+    def _get_virtual_ad(self, v, orig_bam):
+        """Compute virtual AD from the original BAM for a position in the dark
+        region (where liftover failed). Returns [gene_cnt, pseudo_cnt] or None.
+
+        For the gene position, count the ref allele.
+        For the paralog position, look up via mapping and count the alt allele
+        (with reverse complement if mapping is on reverse strand).
+        """
+        # Virtual AD only works for SNPs — at the paralog position we can
+        # count the distinguishing base.  For INDELs the paralog reference
+        # simply lacks the extra base(s), so every read looks like "ref" and
+        # there is no meaningful signal to count.
+        if len(v.ref) != 1 or len(v.alt[0]) != 1:
+            return None
+
+        pileuprec = orig_bam.get_pileup(v.chrom, v.pos)
+        if pileuprec is None:
+            return None
+        gene_cnt = pileuprec.AD.get(v.ref, 0)
+
+        pos2 = self.gene.mapping.get(v.pos)
+        pileuprec2 = orig_bam.get_pileup(v.chrom, pos2)
+        if pileuprec2 is None:
+            return [gene_cnt, 0]
+        alt_base = _rc(v.alt[0]) if self.gene.mapping.reverse else v.alt[0]
+        pseudo_cnt = pileuprec2.AD.get(alt_base, 0)
+        return [gene_cnt, pseudo_cnt]
 
     def load_variants(self, vcf_files):
         self.logger.debug(f"Loading variants from {len(vcf_files)} VCF files")
@@ -136,6 +186,8 @@ class GeneConversionDetector:
             f"Loaded {len(self.variants)} total variants in region {self.chrom}:{self.start}-{self.end}"
         )
         liftover_bam = self.gene.read_data["short_read"]["liftover"]
+        orig_bam = self.gene.read_data["short_read"]["bam"]
+        liftover_valid_itv = self._get_liftover_valid_itv()
         records = []
         for v in self.variants:
             if not v.id or v.id == ".":
@@ -145,14 +197,32 @@ class GeneConversionDetector:
                 if not ads or len(ads) < 2:
                     continue
             else:
-                pileuprec = liftover_bam.get_pileup(v.chrom, v.pos)
-                if pileuprec is None:
-                    continue
-                ref_cnt = pileuprec.AD.get(v.ref, 0)
-                alt_cnt = pileuprec.AD.get(v.alt[0], 0)
-                if sum(pileuprec.AD.values()) - (ref_cnt + alt_cnt) > 2:
-                    continue
-                ads = [ref_cnt, alt_cnt]
+                in_valid = (
+                    liftover_valid_itv is None or (v.chrom, v.pos) in liftover_valid_itv
+                )
+                if in_valid:
+                    pileuprec = liftover_bam.get_pileup(
+                        v.chrom,
+                        v.pos,
+                        include_softclips=self.include_softclips,
+                    )
+                    if pileuprec is None:
+                        continue
+                    ref_cnt = pileuprec.AD.get(v.ref, 0)
+                    alt_cnt = pileuprec.AD.get(v.alt[0], 0)
+                    # Count other bases excluding REF, ALT, and '*' (spanning deletion)
+                    other_cnt = sum(
+                        cnt
+                        for base, cnt in pileuprec.AD.items()
+                        if base not in (v.ref, v.alt[0], "*")
+                    )
+                    if other_cnt > (ref_cnt + alt_cnt) * 0.2:
+                        continue
+                    ads = [ref_cnt, alt_cnt]
+                else:
+                    ads = self._get_virtual_ad(v, orig_bam)
+                    if ads is None:
+                        continue
             records.append([v.id, v.pos, ads])
         self.signals = calc_conversion_signals(records)
         self.logger.info(f"Calculated {len(self.signals)} conversion signals")
@@ -163,6 +233,8 @@ class GeneConversionDetector:
             f"Loading PSV sites from {len(diff_vcf_files)} diff_vcf files"
         )
         liftover_bam = self.gene.read_data["short_read"]["liftover"]
+        orig_bam = self.gene.read_data["short_read"]["bam"]
+        liftover_valid_itv = self._get_liftover_valid_itv()
         records = []
 
         for vcf_file in diff_vcf_files:
@@ -173,21 +245,49 @@ class GeneConversionDetector:
             )
 
             for v in vars_in_region:
-                if len(v.ref) > 1 or any(len(alt) > 1 for alt in v.alt):
+                if len(v.alt) != 1:
                     continue
 
                 if v.info.get("EXCLUDE", 0):
                     continue
 
-                pileuprec = liftover_bam.get_pileup(v.chrom, v.pos)
-                if pileuprec is None:
-                    continue
-
-                gene_cnt = pileuprec.AD.get(v.ref, 0)
-                pseudo_cnt = pileuprec.AD.get(v.alt[0], 0)
-
-                if sum(pileuprec.AD.values()) - (gene_cnt + pseudo_cnt) > 2:
-                    continue
+                is_snp = len(v.ref) == 1 and len(v.alt[0]) == 1
+                in_valid = (
+                    liftover_valid_itv is None or (v.chrom, v.pos) in liftover_valid_itv
+                )
+                if in_valid:
+                    if is_snp:
+                        pileuprec = liftover_bam.get_pileup(
+                            v.chrom,
+                            v.pos,
+                            include_softclips=self.include_softclips,
+                        )
+                        if pileuprec is None:
+                            continue
+                        gene_cnt = pileuprec.AD.get(v.ref, 0)
+                        pseudo_cnt = pileuprec.AD.get(v.alt[0], 0)
+                        other_cnt = sum(
+                            cnt
+                            for base, cnt in pileuprec.AD.items()
+                            if base not in (v.ref, v.alt[0], "*")
+                        )
+                        if other_cnt > (gene_cnt + pseudo_cnt) * 0.2:
+                            continue
+                    else:
+                        pileuprec = liftover_bam.get_indel_ad(
+                            v.chrom, v.pos, v.ref, v.alt[0]
+                        )
+                        if pileuprec is None:
+                            continue
+                        gene_cnt = pileuprec.AD["REF"]
+                        pseudo_cnt = pileuprec.AD["ALT"]
+                        if pileuprec.AD["OTHER"] > (gene_cnt + pseudo_cnt) * 0.2:
+                            continue
+                else:
+                    ads = self._get_virtual_ad(v, orig_bam)
+                    if ads is None:
+                        continue
+                    gene_cnt, pseudo_cnt = ads
 
                 total = gene_cnt + pseudo_cnt
                 if total < 5:

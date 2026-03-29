@@ -3,7 +3,7 @@ import pysam
 import os
 import subprocess
 import sys
-from .util import IntervalList, get_data_file
+from .util import IntervalList, GeneMapping, get_data_file
 from .logging import get_logger
 import heapq
 from collections import namedtuple, Counter
@@ -316,7 +316,7 @@ class Bam:
                     dp0[0] / self.dp_norm,
                 )
             )
-        depth_df = pd.read_csv(tmp_output_norm, sep="\t")[depth_fields]
+        depth_df = pd.read_csv(tmp_output_norm, sep="\t")[depth_fields].copy()
         depth_df["contig"] = depth_df["contig"].astype(str)
         depth_df["DP"] /= self.dp_norm
         depth_df["DP0"] /= self.dp_norm
@@ -527,13 +527,12 @@ class Bam:
         results = []
         for i in range(len(gene.liftover_regions)):
             liftover_bams.append(f"{out_prefix}.{gene.liftover_region_names[i]}.bam")
-            mapping_dict = gene.mapping.g2tog1 if i == 0 else gene.mapping.g1tog2
             results.append(
                 self.liftover(
                     gene.liftover_regions[i],
                     gene.realign_regions[i],
                     liftover_bams[-1],
-                    mapping_dict,
+                    gene.mapping,
                     self.long_read,
                 )
             )
@@ -550,9 +549,10 @@ class Bam:
         extract: str,
         target: str,
         out_bam: str,
-        mapping: Dict[int, int],
+        gene_mapping: GeneMapping,
         crop_first: bool = False,
         min_ratio: float = 0.3,
+        failed_margin: int = 100,
     ) -> Dict[str, str]:
         out_prefix = out_bam[:-5] if out_bam.endswith(".cram") else out_bam[:-4]
         ext = ".cram" if out_bam.endswith(".cram") else ".bam"
@@ -663,8 +663,7 @@ class Bam:
                         ]
                     )
                     for pos in ref_pos:
-                        if pos in mapping:
-                            cur_pos[pos] = cur_pos.get(pos, 0) + 1
+                        cur_pos[pos] = cur_pos.get(pos, 0) + 1
         self.bamh.close()
         self.bamh = None
         self.init_bamh()
@@ -679,12 +678,24 @@ class Bam:
                 total_cnt = pileupcol.get_num_aligned()
                 if pos in cur_pos and cur_pos[pos] < min_ratio * total_cnt:
                     del ref_positions[chr][pos]
-        failed_region = []
-        for region in self.to_region(ref_positions, 10):
-            chr, positions = region.split(":")
-            start, end = [int(s) for s in positions.split("-")]
-            failed_region.append(f"{chr}:{mapping[start] + 1}-{mapping[end - 1] + 2}")
-        failed_region = ",".join(failed_region)
+        # Map failed regions to target coordinates, then pad to account for
+        # reads that straddle the dark region boundary
+        raw_regions = self.to_region(ref_positions, 10)
+        failed_region = ""
+        if raw_regions:
+            raw_regions = (
+                IntervalList(region=",".join(raw_regions))
+                .intersect(extract.replace(" ", ","))
+                .to_region_str()
+            )
+            failed_region = gene_mapping.interval(raw_regions)
+            if failed_margin > 0:
+                failed_region = (
+                    IntervalList(failed_region)
+                    .pad(failed_margin)
+                    .intersect(target.replace(" ", ","))
+                    .to_region_str()
+                )
         return {"lifted_bam": out_bam, "failed_region": failed_region}
 
     def clip2gene(self, gene: Any) -> None:
@@ -743,9 +754,20 @@ class Bam:
             return log_prior
 
         # Step 1: Calculate total log probabilities
+        # For near-zero CN (cn < 1), scale sigma proportionally to CN to
+        # prevent degenerate heavy-tailed distributions that can falsely
+        # "explain" high observed depths.  For CN >= 1, keep the original
+        # overall_depth_std so that legitimate low-CN states (e.g. CN=1
+        # deletions) are not over-penalised.
+        cn_eff = max(cn, err_rate)
+        if cn_eff < 1.0:
+            cv = self.overall_depth_std / max(baseline_cn, err_rate)
+            sigma_scaled = max(cn_eff * cv, err_rate)
+        else:
+            sigma_scaled = self.overall_depth_std
         log_prob_depth_sum = sum(
             CopyNumberModel.gamma_logpdf(
-                max(cn, err_rate), max(depth, err_rate), self.overall_depth_std
+                cn_eff, max(depth, err_rate), sigma_scaled
             )
             for depth in probe_depths
         )
@@ -804,9 +826,10 @@ class Bam:
         )
         return scaled_total_log_prob
 
-    def get_pileup(self, chr, pos):
-        if (chr, pos) in self.pileup_records:
-            return self.pileup_records[(chr, pos)]
+    def get_pileup(self, chr, pos, include_softclips=False):
+        cache_key = (chr, pos, include_softclips)
+        if cache_key in self.pileup_records:
+            return self.pileup_records[cache_key]
         if self.bamh is None:
             self.init_bamh()
         pileuprec = None
@@ -822,9 +845,152 @@ class Bam:
             mq = sum(mqs) / len(mqs)
             pileuprec = PileUpRecord(pos, mq, Counter(seq))
             break
+
+        if include_softclips:
+            pileuprec = self._add_softclip_bases(chr, pos, pileuprec)
+
         if pileuprec:
-            self.pileup_records[(chr, pos)] = pileuprec
+            self.pileup_records[cache_key] = pileuprec
         return pileuprec
+
+    def _add_softclip_bases(self, chr, pos, pileuprec):
+        """Add bases from soft-clipped regions to pileup counts.
+
+        In segdup regions, reads are often soft-clipped by the aligner
+        because the duplicated sequence confuses alignment. The clipped
+        bases still carry allele information useful for gene conversion
+        detection. This method fetches reads whose full extent (including
+        soft clips) covers the target position and recovers those bases.
+        """
+        ad = Counter(pileuprec.AD) if pileuprec else Counter()
+        mq_sum = pileuprec.MQ * sum(ad.values()) if pileuprec else 0.0
+        mq_count = sum(ad.values()) if pileuprec else 0
+
+        for read in self.bamh.fetch(chr, max(0, pos - 200), pos + 201):
+            if read.is_unmapped or read.is_secondary or read.is_duplicate:
+                continue
+            if read.is_qcfail:
+                continue
+
+            # Compute the read's full span including soft clips
+            cigar = read.cigartuples
+            if not cigar:
+                continue
+
+            ref_start = read.reference_start  # 0-based, first aligned pos
+            query_pos = 0  # position within query sequence
+            ref_pos = ref_start
+
+            # Leading soft clip extends the read before ref_start
+            leading_sc = 0
+            if cigar[0][0] == 4:  # BAM_CSOFT_CLIP
+                leading_sc = cigar[0][1]
+
+            full_start = ref_start - leading_sc
+            # Quick check: is this position even in the read's full span?
+            if pos < full_start:
+                continue
+
+            # Walk the CIGAR to find which query base (if any) maps to pos
+            target_query_pos = None
+            ref_pos = ref_start
+            query_pos = 0
+
+            for op, length in cigar:
+                if op == 4:  # SOFT_CLIP: consumes query, ref position is implicit
+                    if query_pos == 0:
+                        # Leading soft clip: maps to ref_start - length .. ref_start - 1
+                        sc_ref_start = ref_start - length
+                        if sc_ref_start <= pos < ref_start:
+                            target_query_pos = query_pos + (pos - sc_ref_start)
+                            break
+                    else:
+                        # Trailing soft clip: maps to current ref_pos .. ref_pos + length - 1
+                        if ref_pos <= pos < ref_pos + length:
+                            target_query_pos = query_pos + (pos - ref_pos)
+                            break
+                    query_pos += length
+                elif op == 0 or op == 7 or op == 8:  # M, =, X: consumes both
+                    if ref_pos <= pos < ref_pos + length:
+                        # This position is aligned — already counted by pileup
+                        target_query_pos = None
+                        break
+                    ref_pos += length
+                    query_pos += length
+                elif op == 1:  # INS: consumes query only
+                    query_pos += length
+                elif op == 2 or op == 3:  # DEL, REF_SKIP: consumes ref only
+                    ref_pos += length
+                elif op == 5:  # HARD_CLIP: consumes nothing
+                    pass
+                else:
+                    pass
+
+            if target_query_pos is not None:
+                seq = read.query_sequence
+                quals = read.query_qualities
+                if seq and 0 <= target_query_pos < len(seq):
+                    # Apply base quality filter (same default as pysam: BQ >= 13)
+                    if quals is not None and quals[target_query_pos] < 13:
+                        continue
+                    base = seq[target_query_pos].upper()
+                    ad[base] += 1
+                    mq_sum += read.mapping_quality
+                    mq_count += 1
+
+        if mq_count == 0:
+            return None
+
+        mq = mq_sum / mq_count
+        return PileUpRecord(pos, mq, ad)
+
+    def get_indel_ad(self, chr, pos, ref, alt):
+        """Count reads supporting REF vs ALT at an indel site.
+
+        Uses pysam's pileup at the anchor base (leftmost position). With
+        add_indels=True, pysam encodes indels as:
+          - Insertion: "A+2CT" (anchor base + +N + inserted seq)
+          - Deletion:  "A-3CTG" (anchor base + -N + deleted seq)
+          - Plain base: "A" (no indel)
+
+        Args:
+            chr: chromosome
+            pos: 0-based position of the anchor base
+            ref: VCF REF allele (e.g. "ACT" for deletion, "A" for insertion)
+            alt: VCF ALT allele (e.g. "A" for deletion, "ACT" for insertion)
+
+        Returns:
+            PileUpRecord with AD={"REF": count, "ALT": count, "OTHER": count}
+            or None if no pileup data.
+        """
+        pileuprec = self.get_pileup(chr, pos)
+        if pileuprec is None:
+            return None
+
+        anchor = ref[0]
+        if len(ref) > len(alt):
+            # Deletion: REF=ACT, ALT=A → deleted seq is ref[1:]
+            indel_len = len(ref) - len(alt)
+            indel_seq = ref[len(alt):]
+            expected_alt = f"{anchor}-{indel_len}{indel_seq}"
+        else:
+            # Insertion: REF=A, ALT=ACT → inserted seq is alt[1:]
+            indel_len = len(alt) - len(ref)
+            indel_seq = alt[len(ref):]
+            expected_alt = f"{anchor}+{indel_len}{indel_seq}"
+
+        ref_count = alt_count = other_count = 0
+        for s, cnt in pileuprec.AD.items():
+            if s == anchor:
+                ref_count += cnt
+            elif s.upper() == expected_alt.upper():
+                alt_count += cnt
+            else:
+                other_count += cnt
+
+        return PileUpRecord(pos, pileuprec.MQ,
+                            {"REF": ref_count, "ALT": alt_count,
+                             "OTHER": other_count})
 
 
 class CopyNumberModel:
@@ -890,23 +1056,20 @@ class CopyNumberModel:
         vcf = vcflib.VCF(given)
         cnts = {}
         for v in vcf:
-            if (
-                reg.get(v.chrom, v.pos, v.end)
-                and len(v.ref) == 1
-                and len(v.alt) == 1
-                and len(v.alt[0]) == 1
-            ):
-                if v.info.get("EXCLUDECN", 0):
-                    continue
+            if not (reg.get(v.chrom, v.pos, v.end) and len(v.alt) == 1):
+                continue
+            if v.info.get("EXCLUDECN", 0):
+                continue
+            is_snp = len(v.ref) == 1 and len(v.alt[0]) == 1
+            if is_snp:
                 pileuprec = bam.get_pileup(v.chrom, v.pos)
                 if pileuprec is None:
                     continue
                 c = pileuprec.AD
                 ref_cnt = c.get(v.ref, 0)
                 alt_cnt = sum(c.values()) - ref_cnt
-                if filter_fn:
-                    if not filter_fn(pileuprec):
-                        continue
+                if filter_fn and not filter_fn(pileuprec):
+                    continue
                 cnts[v.pos] = [ref_cnt, alt_cnt]
                 if alt:
                     cnts[v.pos] += [0, 0]
@@ -914,8 +1077,45 @@ class CopyNumberModel:
                     pileuprec = bam.get_pileup(v.chrom, pos2)
                     if pileuprec:
                         c = pileuprec.AD
-                        ref_cnt2 = c[v.alt[0]]
+                        alt_base = (
+                            Bam.rc(v.alt[0])
+                            if self.gene.mapping.reverse
+                            else v.alt[0]
+                        )
+                        ref_cnt2 = c[alt_base]
                         alt_cnt2 = sum(c.values()) - ref_cnt2
+                        cnts[v.pos][2:] = [ref_cnt2, alt_cnt2]
+            else:
+                # INDEL site
+                pileuprec = bam.get_indel_ad(v.chrom, v.pos, v.ref, v.alt[0])
+                if pileuprec is None:
+                    continue
+                ref_cnt = pileuprec.AD["REF"]
+                alt_cnt = pileuprec.AD["ALT"]
+                if filter_fn and not filter_fn(pileuprec):
+                    continue
+                cnts[v.pos] = [ref_cnt, alt_cnt]
+                if alt:
+                    cnts[v.pos] += [0, 0]
+                    pos2 = self.gene.mapping.get(v.pos)
+                    # At the paralog, the ALT allele of the gene is the
+                    # expected REF, and the gene's REF is the expected ALT.
+                    alt_ref = (
+                        Bam.rc(v.alt[0])
+                        if self.gene.mapping.reverse
+                        else v.alt[0]
+                    )
+                    alt_alt = (
+                        Bam.rc(v.ref)
+                        if self.gene.mapping.reverse
+                        else v.ref
+                    )
+                    pileuprec2 = bam.get_indel_ad(
+                        v.chrom, pos2, alt_ref, alt_alt
+                    )
+                    if pileuprec2:
+                        ref_cnt2 = pileuprec2.AD["REF"]
+                        alt_cnt2 = pileuprec2.AD["ALT"]
                         cnts[v.pos][2:] = [ref_cnt2, alt_cnt2]
         vcf.close()
         return cnts
@@ -925,7 +1125,13 @@ class CopyNumberModel:
         n = max(0.01, n)
         sigma = max(0.01, sigma)
         shape = (n / sigma) ** 2  # Shape parameter
-        scale = sigma**2 / n
+        if shape < 1.0:
+            # Clamp shape >= 1 to prevent degenerate heavy-tailed distributions
+            # when n << sigma (e.g. CN=0). Recompute scale to preserve mean = n.
+            shape = 1.0
+            scale = n  # mean = shape * scale = 1.0 * n = n
+        else:
+            scale = sigma**2 / n
         return gamma.logpdf(mean_values, a=shape, scale=scale)
 
     def detect_longdels(
@@ -1006,6 +1212,17 @@ class CopyNumberModel:
             if len(self.gene.diff_vcf) == 1
             else self.gene.liftover_target_regions
         )
+        # Use liftover_valid regions to restrict liftover BAM queries.
+        # Dark regions (where liftover failed) have wrong ADs in the liftover
+        # BAM — original reads present but paralog reads missing/soft-clipped.
+        liftover_valid = self.read_data[seq_key].get("liftover_valid")
+        if liftover_valid:
+            if len(self.gene.diff_vcf) == 1:
+                liftover_query_region = [",".join(r for r in liftover_valid if r)]
+            else:
+                liftover_query_region = liftover_valid
+        else:
+            liftover_query_region = liftover_region
         # Get chromosome for CNV exclusion region lookup
         # Extract from first gene region (all regions should be on same chromosome)
         chrom = self.gene.gene_regions[0].split(":")[0]
@@ -1031,7 +1248,7 @@ class CopyNumberModel:
                 )
             ]
             pos_ads = self.get_ads_bygiven(
-                liftover_bam, self.gene.diff_vcf[i], liftover_region[i]
+                liftover_bam, self.gene.diff_vcf[i], liftover_query_region[i]
             )
             var_ads += [
                 (p, ads)
@@ -1054,6 +1271,23 @@ class Phased_vcf:
         self.gene = gene
         self.read_data = read_data
         self.logger = get_logger(self.__class__.__name__)
+
+        # Build exclusion interval from detected gene conversion segments.
+        # PSV sites in converted regions no longer reliably distinguish gene
+        # from pseudogene, so they must not be used for variant assignment.
+        self.conversion_excl = None
+        if hasattr(gene, "converted_segments") and gene.converted_segments:
+            chrom = gene.chr
+            regions = [
+                f"{chrom}:{seg.start}-{seg.end}"
+                for seg in gene.converted_segments
+            ]
+            if regions:
+                self.conversion_excl = IntervalList(region=",".join(regions))
+                self.logger.info(
+                    f"Excluding {len(regions)} converted region(s) from "
+                    f"variant assignment: {', '.join(regions)}"
+                )
 
     @staticmethod
     def _annotate(v: Any, dp: Optional[int] = None) -> None:
@@ -1110,7 +1344,13 @@ class Phased_vcf:
         for v in phased:
             gt = list(map(int, re.split(r"\||/", v.samples[0]["GT"])))
             assert sum(cns) == len(gt)
-            if v.id != ".":
+            # Use PSV sites for allele assignment, but skip those in
+            # gene-converted regions where they no longer differentiate
+            is_psv = v.id != "."
+            if is_psv and self.conversion_excl:
+                if (v.chrom, v.pos) in self.conversion_excl:
+                    is_psv = False
+            if is_psv:
                 for i, g in enumerate(gt):
                     if g == 1:
                         all_alleles[i] = all_alleles.get(i, 0) + 1

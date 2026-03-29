@@ -137,20 +137,27 @@ class CategoricalPriors(GenePriors):
                 f"Using categorical CN priors for {region_name}: {priors}"
             )
 
+    def _default_log_prior(self, priors: Dict[int, float]) -> float:
+        """Return a default log prior for undefined CN: min(defined priors) / 10,
+        but no larger than log(1e-6)."""
+        min_log_prior = min(priors.values())
+        return min(min_log_prior + np.log(0.1), np.log(1e-6))
+
     def get_log_prior(self, cn: int, region_name: Optional[str] = None) -> float:
         if self.is_per_region:
             if region_name is not None and region_name in self._log_priors:
-                if cn in self._log_priors[region_name]:
-                    return self._log_priors[region_name][cn]
+                priors = self._log_priors[region_name]
+                if cn in priors:
+                    return priors[cn]
+                return self._default_log_prior(priors)
             self.logger.debug(
                 f"No prior found for CN={cn}, region_name={region_name}. Using default small value."
             )
-            return -1e9
+            return np.log(1e-6)
         else:
             if cn in self._log_priors:
                 return self._log_priors[cn]
-            self.logger.debug(f"No prior found for CN={cn}. Using default small value.")
-            return -1e9
+            return self._default_log_prior(self._log_priors)
 
 
 class GammaPriors(GenePriors):
@@ -1186,3 +1193,116 @@ class PELTGeneSegmenter(GeneSegmenter):
 
         # Cost is the negative log-likelihood
         return -max_log_likelihood
+
+
+class RatioTestSegmenter(GeneSegmenter):
+    """Block-level segmenter via multi-state soft vote.
+
+    For small PSV blocks (< ~10 sites) where HMM/CBS/PELT segmentation
+    cannot detect uniform shifts (no step-wise transitions to find).
+
+    Each site distributes exactly 1.0 vote across all possible allele
+    states, proportional to binomial likelihood. The state with the
+    highest total vote wins. Outputs a single segment covering the
+    entire block.
+
+    States are determined by total_cn: for total_cn=4, states are
+    allele_counts 0,1,2,3,4 with expected pseudo fractions
+    0.00, 0.25, 0.50, 0.75, 1.00.
+    """
+
+    def __init__(self, signals, params={}):
+        super().__init__(signals)
+        self.total_cn = params.get("total_cn", -1)
+        if self.total_cn <= 0:
+            raise ValueError("RatioTestSegmenter requires 'total_cn' parameter > 0")
+
+    @staticmethod
+    def _binom_log_pmf(k, n, p):
+        """Log of binomial PMF: P(X=k | n, p)."""
+        from math import comb, log
+
+        if p <= 0:
+            return 0.0 if k == 0 else float("-inf")
+        if p >= 1:
+            return 0.0 if k == n else float("-inf")
+        return log(comb(n, k)) + k * log(p) + (n - k) * log(1 - p)
+
+    def segment(self):
+        from math import exp
+
+        if not self.signals:
+            self.logger.warning("RatioTest: No signals to segment")
+            self.breakpoints = []
+            self.segments = []
+            return
+
+        n_sites = len(self.signals)
+
+        # Build all candidate states: alt_allele_count -> expected pseudo_frac
+        states = {}
+        for alt_cnt in range(self.total_cn + 1):
+            p = alt_cnt / self.total_cn
+            states[alt_cnt] = max(0.001, min(0.999, p))
+
+        self.logger.info(
+            f"RatioTest segmentation: {n_sites} signals, total_cn={self.total_cn}, "
+            f"{len(states)} states"
+        )
+
+        # Each site distributes 1.0 vote across states
+        total_votes = {alt_cnt: 0.0 for alt_cnt in states}
+
+        for signal in self.signals:
+            gene_cnt, pseudo_cnt = signal.ads[0], signal.ads[1]
+            depth = gene_cnt + pseudo_cnt
+            if depth == 0:
+                continue
+
+            liks = {}
+            for alt_cnt, p in states.items():
+                liks[alt_cnt] = exp(self._binom_log_pmf(pseudo_cnt, depth, p))
+
+            total_lik = sum(liks.values())
+            if total_lik > 0:
+                for alt_cnt in states:
+                    total_votes[alt_cnt] += liks[alt_cnt] / total_lik
+            else:
+                for alt_cnt in states:
+                    total_votes[alt_cnt] += 1.0 / len(states)
+
+        for alt_cnt in sorted(total_votes.keys()):
+            self.logger.debug(
+                f"  alt_allele_count={alt_cnt} (p={states[alt_cnt]:.2f}): "
+                f"votes={total_votes[alt_cnt]:.2f}/{n_sites}"
+            )
+
+        # Winner is the state with the most votes
+        best_alt_cnt = max(total_votes, key=total_votes.get)
+
+        # Compute mean signal for the segment
+        total_pseudo = sum(s.ads[1] for s in self.signals)
+        total_depth = sum(s.ads[0] + s.ads[1] for s in self.signals)
+        mean_signal = total_pseudo / total_depth if total_depth > 0 else 0.5
+
+        # Create a single segment covering the entire block
+        start = min(s.position for s in self.signals)
+        end = max(s.position for s in self.signals) + 1  # half-open
+
+        self.breakpoints = [start, end]
+
+        segment = GeneConversionSegment(
+            start=start,
+            end=end,
+            allele_counts=[self.total_cn - best_alt_cnt, best_alt_cnt],
+            mean_signal=mean_signal,
+            signals=list(self.signals),
+        )
+        self.segments = [segment]
+
+        self.logger.info(
+            f"RatioTest result: allele_counts={segment.allele_counts}, "
+            f"votes={total_votes[best_alt_cnt]:.2f}/{n_sites} "
+            f"(normal: {total_votes.get(self.total_cn // 2, 0):.2f}), "
+            f"mean_signal={mean_signal:.3f}"
+        )

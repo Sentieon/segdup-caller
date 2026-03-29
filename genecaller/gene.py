@@ -452,6 +452,8 @@ class Gene:
         self.logger = get_logger(self.__class__.__name__)
         self._initialize_priors()
         self._initialize_longdel_priors(cfg)
+        self._initialize_conversion_priors()
+        self._mosaic_result = None
 
     @staticmethod
     def _normalize_sex(sex: str) -> str:
@@ -524,6 +526,19 @@ class Gene:
                 self.logger.debug(
                     f"Using default longdel priors: {default_prob} for each deletion"
                 )
+
+    def _initialize_conversion_priors(self) -> None:
+        """Pre-calculate log priors for mosaic conversion events."""
+        self._conversion_log_priors: Dict[str, float] = {}
+        if "conversion_priors" not in self.config:
+            return
+        conversion_priors = self.config["conversion_priors"]
+        for conv_name, prob in conversion_priors.items():
+            if prob <= 0:
+                self._conversion_log_priors[conv_name] = -1e9
+            else:
+                self._conversion_log_priors[conv_name] = np.log(prob)
+        self.logger.debug(f"Using conversion priors: {conversion_priors}")
 
     def _set_cnv_exclusion_mode(self, mode: str) -> None:
         """
@@ -759,6 +774,16 @@ class Gene:
                     )
 
                 result_data["gene_conversions"].append(conversion_data)
+
+        # Report mosaic detection results
+        if hasattr(self, "_mosaic_result") and self._mosaic_result:
+            m = self._mosaic_result
+            result_data["mosaic"] = {
+                "event": m["name"],
+                "type": m["type"],
+                "fraction": float(m["f"]),
+                "score_delta": round(float(m["score"] - m["null_score"]), 4),
+            }
 
         return result_data
 
@@ -1167,6 +1192,13 @@ class Gene:
         bam = self.read_data["short_read"]["bam"]
         liftover_bam = self.read_data["short_read"]["liftover"]
         high_mq_regions = IntervalList(self.high_mq_regions["short_read"])
+        # Build combined liftover_valid IntervalList to scope depth queries
+        liftover_valid_strs = self.read_data["short_read"].get("liftover_valid")
+        if liftover_valid_strs:
+            valid_str = ",".join(r for r in liftover_valid_strs if r)
+            liftover_valid_itv = IntervalList(region=valid_str) if valid_str else None
+        else:
+            liftover_valid_itv = None
         total_prob = 0.0
         min_region_size = 400
 
@@ -1227,8 +1259,18 @@ class Gene:
                 ratio = (self.baseline_cn + diff0) / cn_total if cn_total else 0
                 # Pass conversion N values if available (for iterative CNV-conversion)
                 conversion_n_values = getattr(self, "_conversion_n_values", None)
+                # Scope depth region to liftover_valid to exclude dark
+                # regions where liftover BAM depth is unreliable
+                depth_region = r.region
+                if liftover_valid_itv is not None:
+                    scoped = IntervalList(region=r.region).intersect(
+                        liftover_valid_itv
+                    )
+                    scoped_str = scoped.to_region_str()
+                    if scoped_str:
+                        depth_region = scoped_str
                 liftover_prob = liftover_bam.calc_logprob(
-                    r.region,
+                    depth_region,
                     cn_total,
                     r.ads,
                     ratio,
@@ -1257,6 +1299,7 @@ class Gene:
         # self.solve_longdel()
         self.segmentation()
         self.solve_cn()
+        self.detect_mosaic()
 
     def call_cn_with_conversion_iteration(
         self, read_data: Dict[str, Any], params: Dict[str, Any]
@@ -1394,13 +1437,29 @@ class Gene:
                 tasks.append(params)
             bam = self.read_data[seq_key]["liftover"]
             orig_params["bam_type"] = "liftover"
+            # Scope liftover variant calling to liftover_valid regions
+            # to exclude dark regions where liftover BAM data is unreliable
+            liftover_valid_strs = self.read_data[seq_key].get("liftover_valid")
+            if liftover_valid_strs:
+                valid_str = ",".join(s for s in liftover_valid_strs if s)
+                liftover_valid_itv = IntervalList(region=valid_str) if valid_str else None
+            else:
+                liftover_valid_itv = None
             for i, regions in enumerate(self.merged_liftover_segdup_regions):
                 for j, r in enumerate(regions):
                     if not r.cn:
                         continue
                     params = copy.deepcopy(orig_params)
                     params["bam"] = bam
-                    params["region"] = r.region
+                    call_region = r.region
+                    if liftover_valid_itv is not None:
+                        scoped = IntervalList(region=r.region).intersect(
+                            liftover_valid_itv
+                        )
+                        scoped_str = scoped.to_region_str()
+                        if scoped_str:
+                            call_region = scoped_str
+                    params["region"] = call_region
                     params["ploidy"] = r.cn
                     if len(self.diff_vcf) == 1:
                         params["dbsnp"] = self.diff_vcf[0]
@@ -1689,3 +1748,191 @@ class Gene:
             )
 
         self.converted_segments = all_segments
+
+    def _count_total_observations(self) -> int:
+        """Count depth probes + PSV sites for BIC calculation."""
+        bam = self.read_data["short_read"]["bam"]
+        high_mq_regions = IntervalList(self.high_mq_regions["short_read"])
+        n = 0
+        min_region_size = 400
+        for r in self.all_regions:
+            mq_region = high_mq_regions.intersect(r.region)
+            if mq_region.size() < min_region_size:
+                continue
+            n += len(bam.get_depth(mq_region.to_region_str()))
+        for regions in self.liftover_segdup_regions:
+            for r in regions:
+                n += len(r.ads)
+        return n
+
+    def _get_all_psv_positions(self) -> set:
+        """Get all PSV positions from liftover regions."""
+        positions = set()
+        for regions in self.liftover_segdup_regions:
+            for r in regions:
+                positions.update(r.ads.keys())
+        return positions
+
+    def detect_mosaic(self) -> None:
+        """
+        Unconditional Phase 2: test mosaic topologies for sex-linked genes.
+
+        For genes with mosaic_detection=true, enumerates all candidate event
+        topologies (longdels + conversions) and optimizes a continuous mosaic
+        fraction f in (0.05, 1.0] for each. Uses BIC penalty to prevent
+        overfitting from the extra degree of freedom.
+
+        The null model is Phase 1's integer solution. Each topology is scored:
+            score = log P(Data | topology, f_hat) + log(p_event) - 0.5*ln(n)
+
+        The longdel priors are automatically handled by cal_logprob_cn() when
+        cn_diff != 0. Conversion priors are added externally since they are
+        not part of the standard CN model.
+        """
+        if not self.config.get("mosaic_detection", False):
+            return
+
+        from scipy.optimize import minimize_scalar
+
+        self.logger.info("Running mosaic detection (Phase 2)")
+
+        # Save Phase 1 state
+        saved_dels = {
+            did: info["cn_diff"] for did, info in self.all_vars["dels"].items()
+        }
+        saved_cns = {
+            rid: info["cn_diff"] for rid, info in self.all_vars["cns"].items()
+        }
+        saved_conv_n = getattr(self, "_conversion_n_values", None)
+
+        # BIC penalty: 0.5 * ln(n) for the extra parameter f
+        n_obs = self._count_total_observations()
+        bic_penalty = 0.5 * np.log(max(n_obs, 1))
+
+        # Null score (Phase 1 result)
+        # cal_logprob_cn() already includes longdel no-event priors (log(1-p_del))
+        # We add conversion no-event priors manually
+        null_logprob = self.cal_logprob_cn()
+        conv_no_event_prior = 0.0
+        for lp in self._conversion_log_priors.values():
+            p = np.exp(lp)
+            conv_no_event_prior += np.log(1 - p) if p < 0.999 else -1e6
+        null_score = float(null_logprob + conv_no_event_prior)
+
+        self.logger.info(
+            f"Null model score: {null_score:.4f} "
+            f"(logprob={null_logprob:.4f}, n_obs={n_obs}, BIC_penalty={bic_penalty:.4f})"
+        )
+
+        best: Dict[str, Any] = {
+            "score": null_score,
+            "type": "null",
+            "name": None,
+            "f": None,
+            "null_score": null_score,
+        }
+
+        def restore():
+            for did, diff in saved_dels.items():
+                self.all_vars["dels"][did]["cn_diff"] = diff
+            for rid, diff in saved_cns.items():
+                self.all_vars["cns"][rid]["cn_diff"] = diff
+            self._conversion_n_values = saved_conv_n
+
+        # --- Test longdel topologies ---
+        for del_id, del_name in enumerate(self.longdel_names):
+            restore()
+
+            def objective(f: float, _did: int = del_id) -> float:
+                self.all_vars["dels"][_did]["cn_diff"] = -f
+                return -self.cal_logprob_cn()
+
+            result = minimize_scalar(
+                objective, bounds=(0.05, 1.0), method="bounded"
+            )
+            f_hat = result.x
+            mosaic_logprob = -result.fun
+            # cal_logprob_cn with cn_diff=-f already includes log(p_del)
+            # for this del and log(1-p_del) for others. Add conversion priors.
+            score = mosaic_logprob + conv_no_event_prior - bic_penalty
+
+            self.logger.info(
+                f"  Longdel {del_name}: f={f_hat:.3f}, score={score:.4f} "
+                f"(logprob={mosaic_logprob:.4f})"
+            )
+
+            if score > best["score"]:
+                best = {
+                    "score": float(score),
+                    "type": "longdel",
+                    "name": del_name,
+                    "f": round(float(f_hat), 4),
+                    "del_id": del_id,
+                    "null_score": float(null_score),
+                }
+
+        # --- Test conversion topologies ---
+        psv_positions = self._get_all_psv_positions()
+        if psv_positions and self._conversion_log_priors:
+            n_psv = len(psv_positions)
+            bic_penalty_conv = 0.5 * np.log(max(n_psv, 1))
+
+            for conv_name, conv_log_prior in self._conversion_log_priors.items():
+                restore()
+                self._conversion_n_values = {}
+
+                # Compute prior for "this conversion present, others absent"
+                other_conv_no_event = 0.0
+                for name, lp in self._conversion_log_priors.items():
+                    if name != conv_name:
+                        p = np.exp(lp)
+                        other_conv_no_event += (
+                            np.log(1 - p) if p < 0.999 else -1e6
+                        )
+
+                def objective_conv(
+                    f: float, _positions: set = psv_positions
+                ) -> float:
+                    self._conversion_n_values = {pos: f for pos in _positions}
+                    return -self.cal_logprob_cn()
+
+                result = minimize_scalar(
+                    objective_conv, bounds=(0.05, 1.0), method="bounded"
+                )
+                f_hat = result.x
+                mosaic_logprob = -result.fun
+                # Conversion priors not in cal_logprob_cn — add manually
+                score = (
+                    mosaic_logprob
+                    + conv_log_prior
+                    + other_conv_no_event
+                    - bic_penalty_conv
+                )
+
+                self.logger.info(
+                    f"  Conversion {conv_name}: f={f_hat:.3f}, score={score:.4f} "
+                    f"(logprob={mosaic_logprob:.4f})"
+                )
+
+                if score > best["score"]:
+                    best = {
+                        "score": float(score),
+                        "type": "conversion",
+                        "name": conv_name,
+                        "f": round(float(f_hat), 4),
+                        "null_score": float(null_score),
+                    }
+
+        # Restore Phase 1 state
+        restore()
+
+        # Report result
+        if best["type"] != "null":
+            self._mosaic_result = best
+            self.logger.info(
+                f"Mosaic event detected: {best['name']} ({best['type']}), "
+                f"f={best['f']:.3f}, score={best['score']:.4f} vs null={null_score:.4f}"
+            )
+        else:
+            self._mosaic_result = None
+            self.logger.info("No mosaic event detected")

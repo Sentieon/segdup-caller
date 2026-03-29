@@ -252,6 +252,62 @@ HBA:
   config:
    dp_norm: 1.12
   map: data/HBA.dat
+IKBKG:
+  gene_strand: "+"
+  diff_vcf:
+  - data/IKBKG.vcf.gz
+  - data/IKBKGP1.vcf.gz
+  gene_names:
+  - IKBKG
+  - IKBKGP1
+  gene_regions:
+  - chrX:154555612-154575000
+  - chrX:154632000-154648856
+  liftover_regions:
+  - - IKBKG
+    - chrX:154555612-154572430
+  - - IKBKGP1
+    - chrX:154632000-154648856
+  cn_regions:
+   # Split each gene into 3 sub-regions: flank / 11.7kb segment / flank
+   # The 11.7kb segment can be deleted OR duplicated (bidirectional CNV)
+   - [IKBKG_5prime, chrX:154555612-154558019]
+   - [IKBKGdel, chrX:154558020-154569680]
+   - [IKBKG_3prime, chrX:154569681-154572430]
+   - [IKBKGP1_5prime, chrX:154632000-154634747]
+   - [IKBKGP1del, chrX:154634748-154646416]
+   - [IKBKGP1_3prime, chrX:154646417-154648856]
+  map: data/IKBKG_IKBKGP1.dat
+  conversion_regions:
+  - region: "chrX:154555612-154555890"  # Block 1: 5' flank (42 high-quality PSV sites)
+    fusion_detection: false             # Inverted pseudogene - classical fusion logic N/A
+    min_num_signals: 25                 # ~60% of 42 sites required
+    include_softclips: true             # Recover bases from soft-clipped reads
+  # Block 2 (3' flank, 5 PSV sites) omitted: too noisy for reliable detection
+  # (31.5% differentiation, poor liftover quality, benign-dominated polymorphism)
+  # Sex-specific ploidy configuration for non-PAR X-linked gene
+  sex_chromosome: "X"
+  requires_sex: true
+  baseline_cn_male: 1
+  baseline_cn_female: 2
+  config:
+    # cn_diff_priors: keys are CN deviation from baseline (sex-agnostic)
+    # The IKBKG gene class converts these to absolute CN priors at runtime
+    cn_diff_priors:
+      # Flanks: highly conserved, tight around baseline
+      IKBKG_5prime: {-2: 0.0001, -1: 0.001, 0: 0.9978, 1: 0.001, 2: 0.0001}
+      IKBKG_3prime: {-2: 0.0001, -1: 0.001, 0: 0.9978, 1: 0.001, 2: 0.0001}
+      IKBKGP1_5prime: {-2: 0.0001, -1: 0.001, 0: 0.9978, 1: 0.001, 2: 0.0001}
+      IKBKGP1_3prime: {-2: 0.0001, -1: 0.001, 0: 0.9978, 1: 0.001, 2: 0.0001}
+      # 11.7kb segments: allow deletion and duplication (bidirectional CNV)
+      IKBKGdel: {-2: 0.001, -1: 0.02, 0: 0.965, 1: 0.005, 2: 0.005, 3: 0.004}
+      IKBKGP1del: {-2: 0.005, -1: 0.10, 0: 0.88, 1: 0.005, 2: 0.005, 3: 0.005}
+    mosaic_detection: true
+    dp_norm: 1.15
+    skip_variant_call: true  # Liftover region outside B1 is highly homogenized;
+                             # variant assignment from phased liftover BAM is unreliable
+    conversion_priors:
+      IKBKG_conversion: 0.005
 main:
   cnv_model: data/SentieonGeneCaller0.1.bundle/cnv.model
   min_map_qual: 45

@@ -31,6 +31,8 @@ Currently supported gene families include:
 | **STRC/STRCP1** | Hearing loss | Stereocilin genes |
 | **NCF1/NCF1B** | Chronic granulomatous disease | NADPH oxidase |
 | **CYP11B1/CYP11B2** | Aldosterone disorders | Aldosterone synthase |
+| **RCCX (CYP21A2/CYP21A1P)** | Congenital adrenal hyperplasia | Copy number, gene conversions |
+| **IKBKG/IKBKGP1** | Incontinentia Pigmenti | Copy number, gene conversion (5' region); no SNP/INDEL small variant calling |
 
 ## General Methodology
 
