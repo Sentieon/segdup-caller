@@ -1125,13 +1125,7 @@ class CopyNumberModel:
         n = max(0.01, n)
         sigma = max(0.01, sigma)
         shape = (n / sigma) ** 2  # Shape parameter
-        if shape < 1.0:
-            # Clamp shape >= 1 to prevent degenerate heavy-tailed distributions
-            # when n << sigma (e.g. CN=0). Recompute scale to preserve mean = n.
-            shape = 1.0
-            scale = n  # mean = shape * scale = 1.0 * n = n
-        else:
-            scale = sigma**2 / n
+        scale = sigma**2 / n
         return gamma.logpdf(mean_values, a=shape, scale=scale)
 
     def detect_longdels(
