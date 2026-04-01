@@ -220,6 +220,8 @@ class GeneConversionDetector:
                         continue
                     ads = [ref_cnt, alt_cnt]
                 else:
+                    if not self.gene.config.get("use_virtual_ad", False):
+                        continue
                     ads = self._get_virtual_ad(v, orig_bam)
                     if ads is None:
                         continue
@@ -284,6 +286,8 @@ class GeneConversionDetector:
                         if pileuprec.AD["OTHER"] > (gene_cnt + pseudo_cnt) * 0.2:
                             continue
                 else:
+                    if not self.gene.config.get("use_virtual_ad", False):
+                        continue
                     ads = self._get_virtual_ad(v, orig_bam)
                     if ads is None:
                         continue

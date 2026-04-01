@@ -754,17 +754,15 @@ class Bam:
             return log_prior
 
         # Step 1: Calculate total log probabilities
-        # For near-zero CN (cn < 1), scale sigma proportionally to CN to
-        # prevent degenerate heavy-tailed distributions that can falsely
-        # "explain" high observed depths.  For CN >= 1, keep the original
-        # overall_depth_std so that legitimate low-CN states (e.g. CN=1
-        # deletions) are not over-penalised.
+        # Scale sigma using constant coefficient of variation (CV), but
+        # floor at overall_depth_std so that CN < baseline is never
+        # penalised more tightly than the genome-wide baseline.
+        # This ensures:
+        #   CN < baseline: sigma = overall_depth_std (no reduction)
+        #   CN >= baseline: sigma scales up proportionally to CN
         cn_eff = max(cn, err_rate)
-        if cn_eff < 1.0:
-            cv = self.overall_depth_std / max(baseline_cn, err_rate)
-            sigma_scaled = max(cn_eff * cv, err_rate)
-        else:
-            sigma_scaled = self.overall_depth_std
+        cv = self.overall_depth_std / max(baseline_cn, err_rate)
+        sigma_scaled = max(cn_eff * cv, self.overall_depth_std, err_rate)
         log_prob_depth_sum = sum(
             CopyNumberModel.gamma_logpdf(
                 cn_eff, max(depth, err_rate), sigma_scaled
@@ -1244,6 +1242,21 @@ class CopyNumberModel:
             pos_ads = self.get_ads_bygiven(
                 liftover_bam, self.gene.diff_vcf[i], liftover_query_region[i]
             )
+            # For dark-region PSV sites (outside liftover_valid but inside
+            # liftover_region), optionally derive virtual AD from the original
+            # BAM data in pos_ads1: gene allele count at gene pos + pseudo
+            # allele count at paralog pos.  Sites without paralog mapping
+            # (unique segments) have len(ads1)==2 and are skipped.
+            # Enabled via config.use_virtual_ad (default: off).
+            if liftover_valid and self.gene.config.get("use_virtual_ad", False):
+                full_region = IntervalList(region=liftover_region[i])
+                for pos, ads1 in pos_ads1.items():
+                    if (
+                        pos not in pos_ads
+                        and len(ads1) >= 4
+                        and (chrom, pos) in full_region
+                    ):
+                        pos_ads[pos] = [ads1[0], ads1[2]]
             var_ads += [
                 (p, ads)
                 for p, ads in pos_ads.items()

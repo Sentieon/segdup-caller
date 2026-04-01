@@ -383,9 +383,7 @@ class Gene:
         if cnv_exclude_cfg:
             # Handle [region, prior] pairs (e.g., recombination_regions)
             if isinstance(cnv_exclude_cfg, list):
-                regions = [
-                    r[0] if isinstance(r, list) else r for r in cnv_exclude_cfg
-                ]
+                regions = [r[0] if isinstance(r, list) else r for r in cnv_exclude_cfg]
                 region_str = ",".join(regions)
             else:
                 region_str = cnv_exclude_cfg
@@ -464,12 +462,16 @@ class Gene:
         elif sex_lower in ["female", "f", "xx"]:
             return "female"
         else:
-            raise ValueError(f"Invalid sex value: {sex}. Expected male/female/M/F/XY/XX")
+            raise ValueError(
+                f"Invalid sex value: {sex}. Expected male/female/M/F/XY/XX"
+            )
 
     def _initialize_priors(self) -> None:
         """Initialize CN prior model using factory pattern."""
         # Create GenePriors instance using factory
-        self._priors = create_gene_priors(self.config, self.all_vars["cns"], self.baseline_cn)
+        self._priors = create_gene_priors(
+            self.config, self.all_vars["cns"], self.baseline_cn
+        )
 
     def _initialize_longdel_priors(self, cfg: dict) -> None:
         """Pre-calculate log priors for long deletions"""
@@ -1234,8 +1236,10 @@ class Gene:
             # Note: longdel priors are now calculated once per event above,
             # not per sub-region here
             region_prob = bam.calc_logprob(
-                mq_region.to_region_str(), cn, log_prior=cn_log_prior,
-                baseline_cn=self.baseline_cn
+                mq_region.to_region_str(),
+                cn,
+                log_prior=cn_log_prior,
+                baseline_cn=self.baseline_cn,
             )
             total_prob += region_prob
         cn_neutral = self.baseline_cn * len(self.liftover_segdup_regions)
@@ -1260,15 +1264,21 @@ class Gene:
                 # Pass conversion N values if available (for iterative CNV-conversion)
                 conversion_n_values = getattr(self, "_conversion_n_values", None)
                 # Scope depth region to liftover_valid to exclude dark
-                # regions where liftover BAM depth is unreliable
+                # regions where liftover BAM depth is unreliable.
+                # If scoped region is non-empty, use it (even if small).
+                # If scoped region is empty (entirely dark), fall back to
+                # full region.  Skip only degenerate fragments (< 100bp).
                 depth_region = r.region
                 if liftover_valid_itv is not None:
-                    scoped = IntervalList(region=r.region).intersect(
-                        liftover_valid_itv
-                    )
+                    scoped = IntervalList(region=r.region).intersect(liftover_valid_itv)
                     scoped_str = scoped.to_region_str()
-                    if scoped_str:
+                    if scoped_str and scoped.size() >= 100:
                         depth_region = scoped_str
+                    elif scoped_str and scoped.size() < 100:
+                        # Degenerate fragment — skip, use prior only
+                        total_prob += log_prior
+                        continue
+                    # else: scoped_str empty → keep full r.region as fallback
                 liftover_prob = liftover_bam.calc_logprob(
                     depth_region,
                     cn_total,
@@ -1442,7 +1452,9 @@ class Gene:
             liftover_valid_strs = self.read_data[seq_key].get("liftover_valid")
             if liftover_valid_strs:
                 valid_str = ",".join(s for s in liftover_valid_strs if s)
-                liftover_valid_itv = IntervalList(region=valid_str) if valid_str else None
+                liftover_valid_itv = (
+                    IntervalList(region=valid_str) if valid_str else None
+                )
             else:
                 liftover_valid_itv = None
             for i, regions in enumerate(self.merged_liftover_segdup_regions):
@@ -1800,9 +1812,7 @@ class Gene:
         saved_dels = {
             did: info["cn_diff"] for did, info in self.all_vars["dels"].items()
         }
-        saved_cns = {
-            rid: info["cn_diff"] for rid, info in self.all_vars["cns"].items()
-        }
+        saved_cns = {rid: info["cn_diff"] for rid, info in self.all_vars["cns"].items()}
         saved_conv_n = getattr(self, "_conversion_n_values", None)
 
         # BIC penalty: 0.5 * ln(n) for the extra parameter f
@@ -1847,9 +1857,7 @@ class Gene:
                 self.all_vars["dels"][_did]["cn_diff"] = -f
                 return -self.cal_logprob_cn()
 
-            result = minimize_scalar(
-                objective, bounds=(0.05, 1.0), method="bounded"
-            )
+            result = minimize_scalar(objective, bounds=(0.05, 1.0), method="bounded")
             f_hat = result.x
             mosaic_logprob = -result.fun
             # cal_logprob_cn with cn_diff=-f already includes log(p_del)
@@ -1886,13 +1894,9 @@ class Gene:
                 for name, lp in self._conversion_log_priors.items():
                     if name != conv_name:
                         p = np.exp(lp)
-                        other_conv_no_event += (
-                            np.log(1 - p) if p < 0.999 else -1e6
-                        )
+                        other_conv_no_event += np.log(1 - p) if p < 0.999 else -1e6
 
-                def objective_conv(
-                    f: float, _positions: set = psv_positions
-                ) -> float:
+                def objective_conv(f: float, _positions: set = psv_positions) -> float:
                     self._conversion_n_values = {pos: f for pos in _positions}
                     return -self.cal_logprob_cn()
 

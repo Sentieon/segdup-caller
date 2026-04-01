@@ -278,13 +278,6 @@ IKBKG:
    - [IKBKGP1del, chrX:154634748-154646416]
    - [IKBKGP1_3prime, chrX:154646417-154648856]
   map: data/IKBKG_IKBKGP1.dat
-  conversion_regions:
-  - region: "chrX:154555612-154555890"  # Block 1: 5' flank (42 high-quality PSV sites)
-    fusion_detection: false             # Inverted pseudogene - classical fusion logic N/A
-    min_num_signals: 25                 # ~60% of 42 sites required
-    include_softclips: true             # Recover bases from soft-clipped reads
-  # Block 2 (3' flank, 5 PSV sites) omitted: too noisy for reliable detection
-  # (31.5% differentiation, poor liftover quality, benign-dominated polymorphism)
   # Sex-specific ploidy configuration for non-PAR X-linked gene
   sex_chromosome: "X"
   requires_sex: true
@@ -306,8 +299,7 @@ IKBKG:
     dp_norm: 1.15
     skip_variant_call: true  # Liftover region outside B1 is highly homogenized;
                              # variant assignment from phased liftover BAM is unreliable
-    conversion_priors:
-      IKBKG_conversion: 0.005
+    use_virtual_ad: true     # Use original BAM AD for PSV sites in dark liftover regions
 main:
   cnv_model: data/SentieonGeneCaller0.1.bundle/cnv.model
   min_map_qual: 45
