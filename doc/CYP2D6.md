@@ -2,15 +2,6 @@
 
 > **See [general.md](general.md) for overall methodology, output file formats, validation approach, and usage instructions.**
 
-## What This Module Does
-
-The CYP2D6 module performs:
-
-- **Copy number calling**: Determines copy numbers for CYP2D6 and CYP2D7 regions.
-- **Star allele calling**: Translates phased genotype into pharmacogenomic nomenclature (*1 through *68+) using a tiered consumption algorithm.
-- **Hybrid/fusion allele detection**: Identifies structural variants including *5 (deletion), *13, *36, *68 (hybrid genes), and CYP2D6×N duplications.
-- **Small variant calling**: Calls variants in the CYP2D6/CYP2D7 locus using liftover and phasing.
-
 ## Overview
 
 CYP2D6 (cytochrome P450 2D6) is one of the most clinically important pharmacogenes, metabolizing approximately 25% of all commonly prescribed medications. The CYP2D6/CYP2D7 gene cluster on chromosome 22q13.2 (chr22:42,123,192-42,145,873) contains the functional CYP2D6 gene and its non-functional paralog CYP2D7 with ~93% sequence identity.
@@ -20,6 +11,15 @@ CYP2D6 (cytochrome P450 2D6) is one of the most clinically important pharmacogen
 - **Phenotype prediction**: Predicts metabolizer status (ultrarapid, normal, intermediate, poor)
 - **Hybrid allele detection**: Identifies structural variants *13, *36, *68 (non-functional hybrid genes)
 - **Duplication-aware calling**: Handles CYP2D6xN alleles common in some populations (1-5%)
+
+## What This Module Does
+
+The CYP2D6 module performs:
+
+- **Copy number calling**: Determines copy numbers for CYP2D6 and CYP2D7 regions.
+- **Star allele calling**: Translates phased genotype into pharmacogenomic nomenclature (*1 through *68+) using a tiered consumption algorithm.
+- **Hybrid/fusion allele detection**: Identifies structural variants including *5 (deletion), *13, *36, *68 (hybrid genes), and CYP2D6×N duplications.
+- **Small variant calling**: Calls variants in the CYP2D6/CYP2D7 locus using liftover and phasing.
 
 ## CYP2D6 Gene Cluster Structure
 

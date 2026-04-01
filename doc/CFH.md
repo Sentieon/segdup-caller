@@ -2,13 +2,6 @@
 
 > **See [general.md](general.md) for overall methodology, output file formats, validation approach, and usage instructions.**
 
-## What This Module Does
-
-The CFH module performs:
-
-- **Copy number calling**: Determines copy numbers for four regions (CFH, CFHR31, CFHR142, CFHR2) via global simultaneous optimization. Validated at 100% effective accuracy on 213 HPRC v2.0 samples (all 4 nominal discrepancies confirmed as HPRC annotation errors by PacBio HiFi evidence).
-- **Small variant calling**: Calls variants across the CFH gene cluster using liftover and phasing to resolve >99% identical regions.
-
 ## Overview
 
 The CFH gene cluster on chromosome 1 (chr1:196,652,043-196,948,803) spans approximately 297 kilobases containing the complement factor H (CFH) gene and four related genes (CFHR1-4) with high sequence similarity (>99% in some regions). This gene family regulates the alternative complement pathway.
@@ -18,6 +11,13 @@ The CFH gene cluster on chromosome 1 (chr1:196,652,043-196,948,803) spans approx
 - **Common deletions**: CFHR3+CFHR1 deletions very common (~30-40% heterozygous, ~20% homozygous)
 - **Region-specific priors**: Different Bayesian priors for each region reflecting population frequencies
 - **High homology resolution**: Liftover and phasing resolve >99% identical regions
+
+## What This Module Does
+
+The CFH module performs:
+
+- **Copy number calling**: Determines copy numbers for four regions (CFH, CFHR31, CFHR142, CFHR2) via global simultaneous optimization. Validated at 100% effective accuracy on 213 HPRC v2.0 samples (all 4 nominal discrepancies confirmed as HPRC annotation errors by PacBio HiFi evidence).
+- **Small variant calling**: Calls variants across the CFH gene cluster using liftover and phasing to resolve >99% identical regions.
 
 ## CFH Gene Cluster Structure
 

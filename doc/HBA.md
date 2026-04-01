@@ -2,13 +2,6 @@
 
 > **See [general.md](general.md) for overall methodology, output file formats, validation approach, and usage instructions.**
 
-## What This Module Does
-
-The HBA module performs:
-
-- **Copy number calling**: Determines copy numbers for three regions (-α3.7, -α4.2, non-duplication) to detect both common small deletions and rare large deletions. Validated at 100% accuracy on 215 HPRC v2.0 samples (645/645 CN calls concordant across all 3 regions).
-- **Small variant calling**: Calls variants in HBA1/HBA2 using liftover to resolve the ~97% identical tandem duplication.
-
 ## Overview
 
 The HBA gene cluster on chromosome 16p13.3 (chr16:169,454-177,522) contains two tandemly duplicated alpha-globin genes (HBA1 and HBA2) with ~97% sequence identity. Deletions in these genes cause alpha-thalassemia, one of the most common inherited blood disorders worldwide.
@@ -18,6 +11,13 @@ The HBA gene cluster on chromosome 16p13.3 (chr16:169,454-177,522) contains two 
 - **Common deletion detection**: Identifies -α3.7 and -α4.2 deletions (account for ~90% of α-thalassemia)
 - **Large deletion detection**: Detects --SEA, --MED, --FIL, --THAI deletions via non-duplication region
 - **Clinical phenotype prediction**: Maps genotype to α-thalassemia clinical severity
+
+## What This Module Does
+
+The HBA module performs:
+
+- **Copy number calling**: Determines copy numbers for three regions (-α3.7, -α4.2, non-duplication) to detect both common small deletions and rare large deletions. Validated at 100% accuracy on 215 HPRC v2.0 samples (645/645 CN calls concordant across all 3 regions).
+- **Small variant calling**: Calls variants in HBA1/HBA2 using liftover to resolve the ~97% identical tandem duplication.
 
 ## HBA Gene Cluster Structure
 

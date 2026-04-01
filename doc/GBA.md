@@ -2,15 +2,6 @@
 
 > **See [general.md](general.md) for overall methodology, output file formats, validation approach, and usage instructions.**
 
-## What This Module Does
-
-The GBA module performs:
-
-- **Copy number calling**: Determines copy numbers for GBA1 and GBAP1 regions. Validated at 100% accuracy on HPRC v1.0 samples.
-- **Gene conversion detection**: Identifies RecNciI, RecTL, and individual conversion variants (L483P, A495P, D409H, c.1263del) via HMM-based segmentation. Validated at 100% concordance against Tayebi et al. (2025) on 1000 Genomes high-coverage samples.
-- **Fusion allele detection**: Detects GBA1::GBAP1 fusion events where recombination extends to the 3' gene terminus.
-- **Small variant calling**: Calls variants in the GBA1/GBAP1 locus using liftover and phasing.
-
 ## Overview
 
 GBA (glucocerebrosidase) is a critical lysosomal enzyme gene associated with Gaucher disease and Parkinson's disease risk. The GBA gene cluster on chromosome 1 (chr1:155,210,382-155,241,868) contains the functional GBA1 gene and its highly homologous pseudogene GBAP1 with ~96% sequence identity.
@@ -19,6 +10,15 @@ GBA (glucocerebrosidase) is a critical lysosomal enzyme gene associated with Gau
 - **Gene conversion detection**: Identifies RecNciI, RecTL, and other conversion events
 - **Fusion allele detection**: Detects GBA1::GBAP1 fusion creating chimeric genes
 - **Conversion hotspot**: Exons 9-11 region is a major recombination site
+
+## What This Module Does
+
+The GBA module performs:
+
+- **Copy number calling**: Determines copy numbers for GBA1 and GBAP1 regions. Validated at 100% accuracy on HPRC v1.0 samples.
+- **Gene conversion detection**: Identifies RecNciI, RecTL, and individual conversion variants (L483P, A495P, D409H, c.1263del) via HMM-based segmentation. Validated at 100% concordance against Tayebi et al. (2025) on 1000 Genomes high-coverage samples.
+- **Fusion allele detection**: Detects GBA1::GBAP1 fusion events where recombination extends to the 3' gene terminus.
+- **Small variant calling**: Calls variants in the GBA1/GBAP1 locus using liftover and phasing.
 
 ## GBA Gene Cluster Structure
 
