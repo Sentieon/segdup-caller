@@ -747,6 +747,7 @@ class Bam:
         log_prior: float = 0.0,  # log prior for CN
         conversion_n_values: Optional[Dict[int, int]] = None,  # position -> N value
         baseline_cn: int = 2,  # baseline ploidy for depth normalization
+        sigma_scaling: str = "constant",  # "constant", "linear", or "sublinear"
     ) -> float:
         probe_depths = [baseline_cn * d.mean for d in self.get_depth(region)]
         num_probes = len(probe_depths)
@@ -754,15 +755,23 @@ class Bam:
             return log_prior
 
         # Step 1: Calculate total log probabilities
-        # Scale sigma using constant coefficient of variation (CV), but
-        # floor at overall_depth_std so that CN < baseline is never
-        # penalised more tightly than the genome-wide baseline.
-        # This ensures:
-        #   CN < baseline: sigma = overall_depth_std (no reduction)
-        #   CN >= baseline: sigma scales up proportionally to CN
+        # For CN < 1 (near-zero): always scale sigma down proportionally
+        # to prevent degenerate heavy-tailed gamma distributions.
+        # For CN >= 1: apply configured scaling mode, floored at overall_depth_std.
         cn_eff = max(cn, err_rate)
         cv = self.overall_depth_std / max(baseline_cn, err_rate)
-        sigma_scaled = max(cn_eff * cv, self.overall_depth_std, err_rate)
+        if cn_eff < 1.0:
+            sigma_scaled = max(cn_eff * cv, err_rate)
+        elif sigma_scaling == "linear":
+            sigma_scaled = max(cn_eff * cv, self.overall_depth_std, err_rate)
+        elif sigma_scaling == "sublinear":
+            sigma_scaled = max(
+                np.sqrt(cn_eff / max(baseline_cn, err_rate)) * self.overall_depth_std,
+                self.overall_depth_std,
+                err_rate,
+            )
+        else:  # "constant"
+            sigma_scaled = self.overall_depth_std
         log_prob_depth_sum = sum(
             CopyNumberModel.gamma_logpdf(
                 cn_eff, max(depth, err_rate), sigma_scaled

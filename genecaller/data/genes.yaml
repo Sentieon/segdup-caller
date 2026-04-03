@@ -202,6 +202,7 @@ RCCX:
   map: data/RCCX1_RCCX2.dat
   config:
    dp_norm: 1.1
+   max_move_size: 3
 SMN1:
   gene_strand: "+"
   diff_vcf:

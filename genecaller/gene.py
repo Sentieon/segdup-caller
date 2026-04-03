@@ -3,6 +3,7 @@ from .logging import get_logger
 from .gene_model import create_gene_priors, GenePriors, GeneConversionSegment
 from .conversion_detector import GeneConversionDetector
 import copy
+import itertools
 from dataclasses import dataclass, field
 from genecaller.bam_process import CopyNumberModel, Phased_vcf
 from concurrent.futures import ThreadPoolExecutor
@@ -973,6 +974,14 @@ class Gene:
             msg += f", DEL: {d}"
         self.logger.info(f"{msg}. log_prob: {current_prob}")
 
+        # Build unified variable list: (index_in_state, allowed_states)
+        all_vars_list = [(i, region_states) for i in range(len(region_ids))]
+        all_vars_list += [
+            (len(region_ids) + j, del_states) for j in range(len(del_ids))
+        ]
+        n_vars = len(all_vars_list)
+        max_move_size = min(self.config.get("max_move_size", 2), n_vars)
+
         step = 0
         improved = True
         while improved:
@@ -980,105 +989,28 @@ class Gene:
             best_neighbor_state = None
             best_neighbor_prob = current_prob
 
-            # Test all neighbors (±1 for each variable)
-            # Single variable moves
-            for i in range(len(region_ids)):
-                for delta in [-1, 1]:
-                    new_cn_diff = current_state[i] + delta
-                    if new_cn_diff in region_states:
-                        neighbor_state = list(current_state)
-                        neighbor_state[i] = new_cn_diff
-                        neighbor_state = tuple(neighbor_state)
-
+            # Test all neighbors: k-variable moves for k=1..max_move_size
+            for k in range(1, max_move_size + 1):
+                for combo in itertools.combinations(range(n_vars), k):
+                    # Each variable in the combo gets ±1
+                    for deltas in itertools.product([-1, 1], repeat=k):
+                        neighbor = list(current_state)
+                        valid = True
+                        for ci, delta in zip(combo, deltas):
+                            idx, allowed = all_vars_list[ci]
+                            new_val = current_state[idx] + delta
+                            if new_val not in allowed:
+                                valid = False
+                                break
+                            neighbor[idx] = new_val
+                        if not valid:
+                            continue
+                        neighbor_state = tuple(neighbor)
                         neighbor_prob = get_cached_prob(neighbor_state)
                         if neighbor_prob > best_neighbor_prob:
                             best_neighbor_state = neighbor_state
                             best_neighbor_prob = neighbor_prob
                             improved = True
-
-            for i in range(len(del_ids)):
-                for delta in [-1, 1]:
-                    del_idx = len(region_ids) + i
-                    new_del_diff = current_state[del_idx] + delta
-                    if new_del_diff in del_states:
-                        neighbor_state = list(current_state)
-                        neighbor_state[del_idx] = new_del_diff
-                        neighbor_state = tuple(neighbor_state)
-
-                        neighbor_prob = get_cached_prob(neighbor_state)
-                        if neighbor_prob > best_neighbor_prob:
-                            best_neighbor_state = neighbor_state
-                            best_neighbor_prob = neighbor_prob
-                            improved = True
-
-            # Two variable moves - region pairs
-            for i in range(len(region_ids)):
-                for j in range(i + 1, len(region_ids)):
-                    for delta_i in [-1, 1]:
-                        for delta_j in [-1, 1]:
-                            new_cn_diff_i = current_state[i] + delta_i
-                            new_cn_diff_j = current_state[j] + delta_j
-                            if (
-                                new_cn_diff_i in region_states
-                                and new_cn_diff_j in region_states
-                            ):
-                                neighbor_state = list(current_state)
-                                neighbor_state[i] = new_cn_diff_i
-                                neighbor_state[j] = new_cn_diff_j
-                                neighbor_state = tuple(neighbor_state)
-
-                                neighbor_prob = get_cached_prob(neighbor_state)
-                                if neighbor_prob > best_neighbor_prob:
-                                    best_neighbor_state = neighbor_state
-                                    best_neighbor_prob = neighbor_prob
-                                    improved = True
-
-            # Two variable moves - deletion pairs
-            for i in range(len(del_ids)):
-                for j in range(i + 1, len(del_ids)):
-                    for delta_i in [-1, 1]:
-                        for delta_j in [-1, 1]:
-                            del_idx_i = len(region_ids) + i
-                            del_idx_j = len(region_ids) + j
-                            new_del_diff_i = current_state[del_idx_i] + delta_i
-                            new_del_diff_j = current_state[del_idx_j] + delta_j
-                            if (
-                                new_del_diff_i in del_states
-                                and new_del_diff_j in del_states
-                            ):
-                                neighbor_state = list(current_state)
-                                neighbor_state[del_idx_i] = new_del_diff_i
-                                neighbor_state[del_idx_j] = new_del_diff_j
-                                neighbor_state = tuple(neighbor_state)
-
-                                neighbor_prob = get_cached_prob(neighbor_state)
-                                if neighbor_prob > best_neighbor_prob:
-                                    best_neighbor_state = neighbor_state
-                                    best_neighbor_prob = neighbor_prob
-                                    improved = True
-
-            # Two variable moves - region and deletion pairs
-            for i in range(len(region_ids)):
-                for j in range(len(del_ids)):
-                    for delta_i in [-1, 1]:
-                        for delta_j in [-1, 1]:
-                            del_idx = len(region_ids) + j
-                            new_cn_diff = current_state[i] + delta_i
-                            new_del_diff = current_state[del_idx] + delta_j
-                            if (
-                                new_cn_diff in region_states
-                                and new_del_diff in del_states
-                            ):
-                                neighbor_state = list(current_state)
-                                neighbor_state[i] = new_cn_diff
-                                neighbor_state[del_idx] = new_del_diff
-                                neighbor_state = tuple(neighbor_state)
-
-                                neighbor_prob = get_cached_prob(neighbor_state)
-                                if neighbor_prob > best_neighbor_prob:
-                                    best_neighbor_state = neighbor_state
-                                    best_neighbor_prob = neighbor_prob
-                                    improved = True
 
             # Move to the best neighbor if improvement found
             if improved and best_neighbor_state is not None:
@@ -1201,6 +1133,13 @@ class Gene:
             liftover_valid_itv = IntervalList(region=valid_str) if valid_str else None
         else:
             liftover_valid_itv = None
+        # Sigma scaling config:
+        #   sigma_scaling: "constant" | "linear" | "sublinear" (default: "sublinear")
+        #   sigma_scaling_region: "all" | "liftover_only" (default: "liftover_only")
+        sigma_scaling = self.config.get("sigma_scaling", "sublinear")
+        sigma_region = self.config.get("sigma_scaling_region", "liftover_only")
+        sigma_orig = sigma_scaling if sigma_region == "all" else "constant"
+        sigma_liftover = sigma_scaling
         total_prob = 0.0
         min_region_size = 400
 
@@ -1240,6 +1179,7 @@ class Gene:
                 cn,
                 log_prior=cn_log_prior,
                 baseline_cn=self.baseline_cn,
+                sigma_scaling=sigma_orig,
             )
             total_prob += region_prob
         cn_neutral = self.baseline_cn * len(self.liftover_segdup_regions)
@@ -1287,6 +1227,7 @@ class Gene:
                     log_prior=log_prior,
                     conversion_n_values=conversion_n_values,
                     baseline_cn=self.baseline_cn,
+                    sigma_scaling=sigma_liftover,
                 )
                 total_prob += liftover_prob
 
