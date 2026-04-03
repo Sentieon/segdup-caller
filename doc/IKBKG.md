@@ -16,13 +16,13 @@ IKBKG (Inhibitor of Kappa light polypeptide gene enhancer in B-cells, Kinase Gam
 
 The IKBKG module performs:
 
-- **Copy number calling**: Determines copy numbers for IKBKG flanking regions, IKBKGP1 flanking regions, and the shared 11.7kb exon 4-10 segment (consolidated total). Sex-specific baselines (male CN=1, female CN=2) are applied automatically. Validated at 99.6% accuracy overall (100% for males) against HPRC v2.0 assembly truth.
+- **Copy number calling**: Determines copy numbers for IKBKG flanking regions, IKBKGP1 flanking regions, and the shared 11.7kb exon 4-10 segment (consolidated total). Sex-specific baselines (male CN=1, female CN=2) are applied automatically. Validated at 100% accuracy for IKBKG, 99.6% for IKBKGP1/IKBKGdel (100% for males) against HPRC v2.0 assembly truth.
 
 The IKBKG module does **not** perform:
 
 - **CNV gene attribution in the 11.7kb IKBKGdel region**: The 11.7kb segment (exons 4-10) is fully homogenized between IKBKG and IKBKGP1 with no gene-differentiating sites. CNV events (deletions or duplications) in this region cannot be attributed to gene vs pseudogene from short reads. These events are reported as consolidated totals with an `[UNRESOLVED]` flag.
-- **Small variant calling**: The liftover region outside Block 1 is heavily homogenized between IKBKG and IKBKGP1. Gene-differentiating sites are absent in these regions, making variant assignment to gene vs pseudogene unreliable from phased liftover BAMs. Variant calling is therefore skipped for this gene.
-- **Gene conversion detection**: The Block 1 PSVs used for CN calling are the same sites that differentiate IKBKG from IKBKGP1 — a converted region would simply be classified as the other allele, making gene conversion detection circular. The 3' region lacks sufficient differentiating sites for reliable detection.
+- **Small variant calling**: The liftover region outside 5' unique region is heavily homogenized between IKBKG and IKBKGP1. Reliable gene-differentiating sites are absent in these regions, making variant assignment to gene vs pseudogene unreliable from phased liftover BAMs. Variant calling is therefore skipped for this gene.
+- **Gene conversion detection**: The 5' unique PSVs used for CN calling are the same sites that differentiate IKBKG from IKBKGP1 — a converted region would simply be classified as the other allele, making gene conversion detection circular. The 3' region lacks sufficient differentiating sites for reliable detection.
 
 ## IKBKG Gene Cluster Structure
 
@@ -219,24 +219,71 @@ The IKBKG caller was validated by comparing short-read results against long-read
 
 | Metric | Overall | Male (n=112) | Female (n=111) |
 |--------|---------|--------------|----------------|
-| IKBKG CN | 222/223 (99.6%) | 112/112 (100%) | 110/111 (99.1%) |
+| IKBKG CN | 223/223 (100%) | 112/112 (100%) | 111/111 (100%) |
 | IKBKGP1 CN | 222/223 (99.6%) | 112/112 (100%) | 110/111 (99.1%) |
 | IKBKGdel region | 222/223 (99.6%) | 112/112 (100%) | 110/111 (99.1%) |
 
-Male copy number is 100% accurate across all three metrics. The only errors are in two female samples with extreme structural events or high copy-number gain events.
+IKBKG CN is 100% accurate. The only remaining error is NA18565, where full Block 1 gene conversion makes the extra IKBKGP1 copy undetectable in short reads.
+
+### CNV Events Observed (all 248 samples)
+
+**Male (n=124, normal CN=1)**:
+
+| Gene | Normal | Gain | Loss |
+|------|--------|------|------|
+| IKBKG | 124 (100%) | 0 | 0 |
+| IKBKGP1 | 123 (99.2%) | 0 | 1 (0.8%) |
+
+- IKBKGP1 loss: HG03225 (CN=0)
+
+**Female (n=124, normal CN=2)**:
+
+| Gene | Normal | Gain | Loss |
+|------|--------|------|------|
+| IKBKG | 124 (100%) | 0 | 0 |
+| IKBKGP1 | 124 (100%) | 0 | 0 |
+
+### IKBKGdel Region CNV Events (assembly truth, n=223)
+
+The IKBKGdel region CN is the total copy number of the shared exon 4-10 deletion region across all IKBKG and IKBKGP1 copies (normal: male=2, female=4).
+
+**Male (n=112, normal del_region=2)**:
+
+| Region | Normal | Gain | Loss |
+|--------|--------|------|------|
+| In IKBKG | 110 (98.2%) | 2 (1.8%) | 0 |
+| In IKBKGP1 | 108 (96.4%) | 4 (3.6%) | 0 |
+| Total | 106 (94.6%) | 5 (4.5%) | 1 (0.9%) |
+
+- IKBKG gain: NA18945 (+1), HG02965 (+2)
+- IKBKGP1 gain: HG02717 (+1), NA18940 (+1), NA19443 (+1), HG02965 (+3)
+- Total loss: HG03225 (CN=1, IKBKGP1 absent)
+
+**Female (n=111, normal del_region=4)**:
+
+| Region | Normal | Gain | Loss |
+|--------|--------|------|------|
+| In IKBKG | 109 (98.2%) | 2 (1.8%) | 0 |
+| In IKBKGP1 | 105 (94.6%) | 5 (4.5%) | 1 (0.9%) |
+| Total | 104 (93.7%) | 6 (5.4%) | 1 (0.9%) |
+
+- IKBKG gain: NA19036 (+1), NA19909 (+5)
+- IKBKGP1 gain: HG03704 (+1), HG03804 (+1), HG01891 (+3), NA19036 (+3), NA19909 (+3)
+- IKBKGP1 loss: HG00733 (-1)
+- Total gain: HG03704 (CN=5), HG03804 (CN=5), NA18565 (CN=5), HG01891 (CN=7), NA19036 (CN=8), NA19909 (CN=12)
+- Total loss: HG00733 (CN=3)
 
 ### Validation Summary
 
-- Copy number accuracy is 99.6% overall, 100% for males across all metrics
-- The only mismatches are in two female samples with extreme structural events (full Block 1 conversion, high-gain duplication)
+- IKBKG CN is 100% accurate; IKBKGP1 and IKBKGdel are 99.6% overall, 100% for males
+- The sole mismatch is one female sample (NA18565) with full Block 1 gene conversion making the extra IKBKGP1 copy undetectable
 
 ## Known Limitations
 
 - **11.7kb segment gene attribution**: The most significant limitation. The 11.7kb segment is fully homogenized between IKBKG and IKBKGP1 with no differentiating variants. Short reads cannot determine whether a segment-level CNV (deletion or duplication) affects the functional gene or the pseudogene. These events are reported with an `[UNRESOLVED]` flag. Long-read sequencing or other orthogonal methods are required for definitive gene assignment. Flanking regions ARE distinguishable, so whole-gene deletions (where flanks are also affected) CAN be attributed to a specific gene.
 - **No gene conversion detection**: The Block 1 PSVs used for CN calling are the same sites that differentiate IKBKG from IKBKGP1 — a converted region would simply be classified as the other allele, making gene conversion detection circular. The 3' region lacks sufficient differentiating sites for reliable detection.
 - **No small variant calling**: Due to pervasive homogenization outside Block 1, variant assignment from phased liftover BAMs is unreliable. Small variant calling is skipped for this gene.
-- **Full Block 1 conversion**: When IKBKGP1 has complete Block 1 gene conversion (42/42 PSVs), it becomes indistinguishable from IKBKG in short-read pileup analysis, causing CN misattribution (NA18565 case).
-- **High-gain events**: Samples with many tandem duplications in the shared exon 4-10 region can create skewed allele balance that causes false IKBKG gain (NA19909 case).
+- **Full Block 1 conversion**: When IKBKGP1 has complete Block 1 gene conversion (42/42 PSVs), it becomes indistinguishable from IKBKG in short-read pileup analysis, causing CN misattribution (NA18565 case). This is the sole remaining source of CN error.
 - **Inverted pseudogene**: IKBKGP1 is inverted relative to IKBKG, which precludes classical fusion detection. Structural events are detected via copy number changes rather than fusion breakpoints.
 
 ## IKBKG-Specific Resources
