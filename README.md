@@ -78,7 +78,7 @@ usage: segdup-caller [-h] --short SHORT [--long LONG] --sr_model SR_MODEL
                      [--lr_model LR_MODEL] --reference REFERENCE [--genes GENES]
                      [--sample_name SAMPLE_NAME] [--sr_prefix SR_PREFIX]
                      [--lr_prefix LR_PREFIX] [--config CONFIG] --outdir OUTDIR
-                     [--threads THREADS] [--version] [--keep_temp]
+                     [--threads THREADS] [--version] [--keep_temp] [--merge_vcf]
 ```
 
 Targeted variant caller for genes with highly similar paralogs.
@@ -126,6 +126,12 @@ Targeted variant caller for genes with highly similar paralogs.
   --version                 Show program's version number and exit
 
   --keep_temp               Keep temporary files for debugging
+
+  --merge_vcf               Also emit a single merged VCF concatenating every
+                            per-gene result VCF, with an INFO/GENE tag
+                            identifying the source gene. The merged file is
+                            written to <outdir>/<sample_name>.merged.vcf.gz
+                            and referenced under "merged_vcf" in the run YAML.
 ```
 
 ### Examples
@@ -153,6 +159,12 @@ segdup-caller -s $short_read_bam -r $hg38_REF --sr_model $short_read_model_bundl
 # Process 8 genes concurrently, each using up to 4 threads
 segdup-caller -s $short_read_bam -r $hg38_REF --sr_model $short_read_model_bundle -o $outdir --workers 8 --threads 4
 ```
+
+**Producing a single merged VCF across all called genes:**
+```bash
+segdup-caller -s $short_read_bam -r $hg38_REF --sr_model $short_read_model_bundle -o $outdir --merge_vcf
+```
+This writes `$outdir/<sample_name>.merged.vcf.gz` (bgzipped + tabix-indexed) in addition to the per-gene result VCFs. Every record carries an `INFO/GENE` tag identifying its source gene, and the header is the union of every per-gene VCF's INFO / FORMAT / FILTER / ALT / contig declarations — avoiding the header-conflict failures of post-hoc `bcftools concat`.
 
 ---
 
