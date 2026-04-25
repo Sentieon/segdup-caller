@@ -888,3 +888,79 @@ def load_bam(in_bam: str, in_ref: Optional[str] = None) -> pysam.AlignmentFile:
     else:
         bamh = pysam.AlignmentFile(in_bam, "rb")
     return bamh
+
+
+_VCF_HDR_ID = re.compile(r"^##(INFO|FORMAT|FILTER|ALT|contig)=<ID=([^,>]+)")
+
+
+def merge_gene_vcfs(result: Dict[str, Any], output_path: str) -> str:
+    """Merge per-gene result VCFs into one VCF, tagging each record with INFO/GENE."""
+    gene_vcfs: List[Tuple[str, str]] = []
+    for gene, data in result.items():
+        if not isinstance(data, dict):
+            continue
+        vcf_path = data.get("Variants")
+        if not vcf_path or not os.path.exists(vcf_path):
+            continue
+        gene_vcfs.append((gene, vcf_path))
+
+    if not gene_vcfs:
+        raise FileNotFoundError("No per-gene VCFs found in result dict")
+
+    collected: Dict[Tuple[str, str], str] = {}
+    for _, path in gene_vcfs:
+        vcf = vcflib.VCF(path)
+        try:
+            for line in vcf.headers:
+                m = _VCF_HDR_ID.match(line)
+                if m:
+                    collected.setdefault((m.group(1), m.group(2)), line)
+        finally:
+            vcf.close()
+
+    update_lines = list(collected.values()) + [
+        "##INFO=<ID=GENE,Number=1,Type=String,"
+        'Description="Source gene identifier from segdup-caller merge">'
+    ]
+
+    donor = vcflib.VCF(gene_vcfs[0][1])
+    out_vcf = vcflib.VCF(output_path, "w")
+    n_records = 0
+    try:
+        out_vcf.copy_header(donor, update=update_lines)
+        out_vcf.emit_header()
+
+        contig_idx = {c: i for i, c in enumerate(out_vcf.contigs.keys())}
+        heap: List[Tuple[int, int, str, int, Any]] = []
+        counter = 0
+        for gene, path in gene_vcfs:
+            vcf = vcflib.VCF(path)
+            try:
+                for v in vcf:
+                    v.info["GENE"] = gene
+                    v.line = None
+                    heapq.heappush(
+                        heap,
+                        (
+                            contig_idx.get(v.chrom, len(contig_idx)),
+                            v.pos,
+                            f"{v.ref}_{','.join(v.alt)}",
+                            counter,
+                            v,
+                        ),
+                    )
+                    counter += 1
+            finally:
+                vcf.close()
+        while heap:
+            _, _, _, _, v = heapq.heappop(heap)
+            out_vcf.emit(v)
+        n_records = counter
+    finally:
+        out_vcf.close()
+        donor.close()
+
+    logger.info(
+        f"Merged {len(gene_vcfs)} per-gene VCFs ({n_records} variants) → {output_path}"
+    )
+    return output_path

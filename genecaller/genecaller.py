@@ -14,6 +14,7 @@ from genecaller.util import (
     load_bam,
     get_data_file,
     get_software_versions,
+    merge_gene_vcfs,
 )
 from genecaller.bam_process import Bam
 from genecaller.gene import Gene
@@ -309,6 +310,12 @@ class GeneCaller:
             help="Sample sex for X-linked genes (required for non-PAR genes like IKBKG). "
             "Accepted values: male/M/XY or female/F/XX (case-insensitive)",
         )
+        parser.add_argument(
+            "--merge_vcf",
+            action="store_true",
+            help="Also emit a single merged VCF concatenating every per-gene "
+            "result VCF, with an INFO/GENE tag identifying the source gene.",
+        )
         args = parser.parse_args()
 
         # Setup tools after argument parsing (so --version and --help work without dependencies)
@@ -360,7 +367,7 @@ class GeneCaller:
         self.input = args.short, args.long
         self.ref = args.reference
         # Extract sex argument (if provided)
-        sex = getattr(args, 'sex', None)
+        sex = getattr(args, "sex", None)
         self.genes = [get_gene_class(g)(config[g], self.ref, sex=sex) for g in genes]
 
         if args.threads > cpu_count():
@@ -408,6 +415,7 @@ class GeneCaller:
                 "threads": args.threads,
                 "workers": args.workers,
                 "skip_variant_call": args.skip_variant_call,
+                "merge_vcf": args.merge_vcf,
             }
         )
         self.args = args
@@ -598,6 +606,16 @@ class GeneCaller:
             config_section["job_options"]["lr_model"] = self.args.lr_model
         if self.args.config:
             config_section["job_options"]["config"] = self.args.config
+
+        if self.params.get("merge_vcf"):
+            merged_path = (
+                f"{self.params['outdir']}/{self.params['sample_name']}.merged.vcf.gz"
+            )
+            try:
+                merge_gene_vcfs(result, merged_path)
+                result["merged_vcf"] = merged_path
+            except Exception as e:  # auxiliary output; don't fail the run
+                logger.warning(f"Skipping --merge_vcf: {e}")
 
         result["config"] = config_section
 
