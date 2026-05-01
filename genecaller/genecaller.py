@@ -145,6 +145,7 @@ def _init_read_data(input_files, ref, params, gene_name) -> dict:
         )
         if "lr_model" in params:
             lr_params["model"] = params["lr_model"]
+        lr_params.pop("input_vcf", None)
         long_bam = Bam(long, ref, lr_params)
         read_data["long_read"] = {"bam": long_bam, "params": lr_params}
     return read_data
@@ -316,6 +317,7 @@ class GeneCaller:
             help="Also emit a single merged VCF concatenating every per-gene "
             "result VCF, with an INFO/GENE tag identifying the source gene.",
         )
+        parser.add_argument("--input_vcf", help=argparse.SUPPRESS)
         args = parser.parse_args()
 
         # Setup tools after argument parsing (so --version and --help work without dependencies)
@@ -401,6 +403,19 @@ class GeneCaller:
         # Update the logger level since it was created before global level was set
         logger.setLevel(getattr(logging, args.log_level.upper()))
 
+        if args.input_vcf:
+            if not os.path.exists(args.input_vcf):
+                raise Exception(f"--input_vcf file does not exist: {args.input_vcf}")
+            if not os.path.exists(args.input_vcf + ".tbi"):
+                raise Exception(
+                    f"--input_vcf tabix index not found: {args.input_vcf}.tbi"
+                )
+            if args.long:
+                logger.warning(
+                    "--input_vcf only affects the short-read pipeline; "
+                    "long-read DNAscope calling is unchanged."
+                )
+
         self.params.update(
             {
                 "outdir": args.outdir,
@@ -418,6 +433,8 @@ class GeneCaller:
                 "merge_vcf": args.merge_vcf,
             }
         )
+        if args.input_vcf:
+            self.params["input_vcf"] = args.input_vcf
         self.args = args
         self.print_param()
 

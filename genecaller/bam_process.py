@@ -22,6 +22,22 @@ DepthSegment = namedtuple("DepthSegment", "chrom, start, end, mq, mean, mean0")
 PileUpRecord = namedtuple("PileUpRecord", "pos, MQ, AD")
 
 
+def subset_input_vcf(
+    bcftools: str,
+    sentieon: str,
+    input_vcf: str,
+    region: str,
+    output: str,
+) -> None:
+    cmd = (
+        f"{bcftools} view -r {region} -f PASS,. {input_vcf} "
+        f"| {sentieon} util vcfconvert - {output}"
+    )
+    result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+    if result.returncode:
+        raise Exception(result.stderr)
+
+
 class Bam:
     def __init__(self, bam: str, ref: str, param: Dict[str, Any]) -> None:
         self.bam = bam
@@ -85,6 +101,24 @@ class Bam:
 
     def call_variant(self, output: str, param: Dict[str, Any]) -> None:
         if self.use_existing and os.path.exists(output) and os.path.getsize(output):
+            return
+        if (
+            param.get("input_vcf")
+            and param.get("ploidy") == 2
+            and param.get("bam_type") == "orig"
+            and param.get("seq_key") == "short_read"
+            and not param.get("given")
+        ):
+            self.logger.info(
+                f"Using --input_vcf for {param['region']} (skipping DNAscope diploid call)"
+            )
+            subset_input_vcf(
+                self.bcftools,
+                self.sentieon,
+                param["input_vcf"],
+                param["region"],
+                output,
+            )
             return
         if "ploidy" in param and param["ploidy"] != 2:
             param["algo"] = "Haplotyper"

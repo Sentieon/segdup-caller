@@ -1590,6 +1590,13 @@ class Gene:
                         orig_vcf.close()
                     else:
                         orig_vars = []
+                    if seq_key == "short_read" and params.get("input_vcf"):
+                        orig_positions = {(v.chrom, v.pos) for v in orig_vars}
+                        lift_vars = [
+                            v
+                            for v in lift_vars
+                            if (v.chrom, v.pos) not in orig_positions
+                        ]
                     resolved[seq_key] = lift_vars, orig_vars
             # resolve short and long read
             if len(resolved) > 1:
