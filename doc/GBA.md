@@ -201,16 +201,16 @@ GBA1:
 
 ### Copy Number Prior
 
-GBA uses **Gaussian distribution** priors reflecting population frequencies:
+GBA uses **Categorical priors** with separate distributions for each region, reflecting their distinct population frequencies:
 
 **GBA1**:
-- Very tight prior around CN=2 (99.8% expected diploid)
-- Standard deviation: 0.1
+- Very tight prior around CN=2 (99.75% expected diploid)
+- Categorical distribution: `{0: 0.0005, 1: 0.001, 2: 0.9975, 3: 0.0005, 4: 0.0005}`
 - Reflects extreme rarity of GBA1 deletions
 
 **GBAP1**:
 - Broader prior allowing deletions
-- Approximate distribution: 74% CN=2, 20% CN=1, 5% CN=0
+- Categorical distribution: `{0: 0.05, 1: 0.20, 2: 0.74, 3: 0.005, 4: 0.005}` (74% CN=2, 20% CN=1, 5% CN=0)
 - Reflects common GBAP1 deletions in population
 
 ### Conversion Detection Parameters

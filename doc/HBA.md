@@ -148,9 +148,9 @@ This provides comprehensive detection of both common small deletions and rare la
 
 ### Copy Number Prior
 
-HBA uses **Gaussian priors** reflecting population-specific deletion frequencies:
+HBA uses the default **Gaussian priors** centered at CN=2.
 
-**Implementation**: Priors can be adjusted for ethnicity where deletion frequencies vary significantly (e.g., Southeast Asian vs European populations).
+**Implementation note**: Priors can be customized for ethnicity-specific deletion frequencies (e.g., Southeast Asian vs European populations) by adding region-specific `cn_priors` to the HBA `config` block in `genes.yaml`.
 
 ### Depth Normalization Factor
 
@@ -158,7 +158,7 @@ HBA analysis uses a **depth normalization factor of 1.12** to account for the ta
 
 ### Copy Number State Detection
 
-The caller determines CN state (0, 1, 2, 3, 4) for each of the three regions using maximum likelihood optimization across all regions simultaneously.
+The caller determines CN state (0, 1, 2, 3, 4) for each of the three regions using maximum a posteriori (MAP) optimization across all regions simultaneously.
 
 ## Validation Results
 

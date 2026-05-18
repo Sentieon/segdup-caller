@@ -18,7 +18,7 @@ Segdup caller supports additional long-read data from **PacBio HiFi** or **Oxfor
 
 ## Key Features
 
-- **Copy Number Determination**: Statistical modeling to determine copy number states for each gene region using maximum likelihood optimization
+- **Copy Number Determination**: Statistical modeling to determine copy number states for each gene region using maximum a posteriori (MAP) optimization with gene-specific Bayesian priors
 - **Accurate Variant Calling in Complex Regions**: Specialized algorithms for genes with highly similar paralogs and pseudogenes
 - **Haplotype Phasing**: Integrates whatshap for accurate phasing and assignment of variants to specific gene copies
 - **Gene conversion detection**: Detects gene conversion and fusion detection for select genes
@@ -62,6 +62,7 @@ pip install ./segdup-caller
 - [Sentieon Genomics software (version 202503 or later)](https://www.sentieon.com/free-trial/)
 - [samtools (version 1.16 or later)](http://www.htslib.org/)
 - [bcftools (version 1.10 or later)](http://www.htslib.org/)
+- [whatshap (version 2.3 or later)](https://whatshap.readthedocs.io/)
 
 ---
 
@@ -78,7 +79,9 @@ usage: segdup-caller [-h] --short SHORT [--long LONG] --sr_model SR_MODEL
                      [--lr_model LR_MODEL] --reference REFERENCE [--genes GENES]
                      [--sample_name SAMPLE_NAME] [--sr_prefix SR_PREFIX]
                      [--lr_prefix LR_PREFIX] [--config CONFIG] --outdir OUTDIR
-                     [--threads THREADS] [--version] [--keep_temp] [--merge_vcf]
+                     [--version] [--keep_temp] [--threads THREADS]
+                     [--workers WORKERS] [--sex {male,female,M,F,XY,XX}]
+                     [--merge_vcf]
 ```
 
 Targeted variant caller for genes with highly similar paralogs.
@@ -101,8 +104,8 @@ Targeted variant caller for genes with highly similar paralogs.
 
   --genes GENES, -g GENES   List of genes to be called (comma separated).
                             If not specified, all supported genes will be called.
-                            Supported genes: CFH, CFHR3, CYP11B1, CYP2D6, GBA,
-                            HBA, IKBKG, NCF1, PMS2, RCCX, SMN1, STRC
+                            Supported genes: CFH, CYP11B1, CYP2D6, GBA, HBA,
+                            IKBKG, NCF1, PMS2, RCCX, SMN1, STRC
 
   --sample_name SAMPLE_NAME Sample name (default: SM tag in the input short-read
                             BAM file will be used)
@@ -126,6 +129,11 @@ Targeted variant caller for genes with highly similar paralogs.
   --version                 Show program's version number and exit
 
   --keep_temp               Keep temporary files for debugging
+
+  --sex {male,female,M,F,XY,XX}
+                            Sample sex for X-linked genes (required for non-PAR
+                            genes like IKBKG). Accepted values: male/M/XY or
+                            female/F/XX (case-insensitive).
 
   --merge_vcf               Also emit a single merged VCF concatenating every
                             per-gene result VCF, with an INFO/GENE tag

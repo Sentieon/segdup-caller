@@ -56,13 +56,11 @@ The Sentieon Segdup Caller employs a multi-phase analysis pipeline optimized for
 **Purpose**: Determine the copy number (CN) state for each gene or genomic region.
 
 1. **Read depth normalization**: Calculates normalized read depth across all target regions
-2. **Maximum likelihood optimization**: Uses sophisticated hill-climbing algorithm to find optimal CN state
-3. **Bayesian prior integration**: Incorporates gene-specific priors reflecting population frequencies:
-   - **Gaussian priors**: For genes with tight CN distribution around diploid (e.g., GBA1)
-   - **Categorical priors**: For genes with known discrete CN states (e.g., SMN1)
+2. **Maximum a posteriori (MAP) optimization**: A hill-climbing algorithm finds the CN state maximizing `log P(data | CN) + log P(CN)`, combining the data likelihood (read depth and PSV allele balance) with a gene-specific prior:
+   - **Gaussian priors**: For genes with tight CN distribution around diploid (e.g., PMS2)
+   - **Categorical priors**: For genes with discrete, well-characterized CN states, including region-specific distributions (e.g., CFH cluster, GBA1/GBAP1)
    - **Gamma priors**: For genes with asymmetric CN distributions (e.g., CYP2D6 duplications)
-4. **Region-specific priors**: Some genes use different priors for different regions (e.g., CFH cluster)
-5. **CN state output**: Reports most likely copy number (0, 1, 2, 3, 4+) for each region
+3. **CN state output**: Reports most likely copy number (0, 1, 2, 3, 4+) for each region
 
 ### Phase 3: Small Variant Calling
 
@@ -351,6 +349,7 @@ See the gene-specific documentation files:
 ## See Also
 
 - [Sentieon Genomics](https://www.sentieon.com/)
+- [PharmVar Star Allele Definitions](https://www.pharmvar.org/)
 - [PharmGKB Pharmacogenomics Database](https://www.pharmgkb.org/)
 - [CPIC Clinical Pharmacogenetics Guidelines](https://cpicpgx.org/)
 - [HPRC Human Pangenome Reference Consortium](https://humanpangenome.org/)
