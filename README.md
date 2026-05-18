@@ -61,7 +61,7 @@ pip install ./segdup-caller
 
 - [Sentieon Genomics software (version 202503 or later)](https://www.sentieon.com/free-trial/)
 - [samtools (version 1.16 or later)](http://www.htslib.org/)
-- [bcftools (version 1.10 or later)](http://www.htslib.org/)
+- [bcftools (version 1.16 or later)](http://www.htslib.org/)
 - [whatshap (version 2.3 or later)](https://whatshap.readthedocs.io/)
 
 ---

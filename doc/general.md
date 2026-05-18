@@ -306,7 +306,7 @@ segdup-caller \
 
 - **Sentieon Genomics Software** (v202503+): Commercial variant calling platform
 - **samtools** (v1.16+): BAM file manipulation
-- **bcftools** (v1.10+): VCF file processing
+- **bcftools** (v1.16+): VCF file processing
 - **whatshap** (v2.3+): Haplotype phasing
 - **Python** (v3.10+) with packages: pysam, pyyaml, colorlog, scipy, pandas, vcflib
 
