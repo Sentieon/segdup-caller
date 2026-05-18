@@ -2,6 +2,7 @@ import vcflib
 import io
 import bisect
 import collections
+import json
 import re
 import heapq
 import copy
@@ -141,6 +142,91 @@ def get_data_file(input_filename: str) -> Optional[str]:
     except Exception as e:
         logger.error(f"An error occurred: {e}")
         return None
+
+
+def read_bundle_info(bundle_path: str) -> Dict[str, Any]:
+    """Read bundle_info.json from a Sentieon model bundle.
+
+    Sentieon ships bundles as `ar` archive files (the usual shape on disk);
+    older / hand-built bundles may also be plain directories. Both are
+    accepted as `--sr_model` / `--lr_model` because `sentieon driver` itself
+    resolves either form. This helper mirrors that: it looks for
+    `bundle_info.json` as a member of the archive when `bundle_path` is a
+    file, or as a file in the directory otherwise. Returns {} when the
+    manifest is absent (i.e. a non-population bundle).
+    """
+    if os.path.isdir(bundle_path):
+        bundle_info_path = os.path.join(bundle_path, "bundle_info.json")
+        if not os.path.exists(bundle_info_path):
+            return {}
+        with open(bundle_info_path) as f:
+            return json.load(f)
+    if os.path.isfile(bundle_path):
+        blob = _extract_ar_member(bundle_path, "bundle_info.json")
+        if blob is None:
+            return {}
+        return json.loads(blob)
+    return {}
+
+
+def _extract_ar_member(archive_path: str, member: str) -> Optional[bytes]:
+    """Extract a single member's bytes from a GNU/BSD `ar` archive.
+
+    Returns None if the archive can't be parsed or the member is absent.
+    Handles GNU extended names (the `//` string table + `/<offset>` refs)
+    and BSD extended names (`#1/<len>` with the real name prefixing data).
+    Used for reading `bundle_info.json` out of Sentieon model bundles
+    without shelling out to `ar`.
+    """
+    try:
+        with open(archive_path, "rb") as f:
+            if f.read(8) != b"!<arch>\n":
+                return None
+            long_names = b""
+            while True:
+                header = f.read(60)
+                if len(header) < 60:
+                    return None
+                if header[58:60] != b"`\n":
+                    return None
+                raw = header[:16].rstrip(b" ")
+                try:
+                    size = int(header[48:58].strip())
+                except ValueError:
+                    return None
+                data = f.read(size)
+                if size % 2:
+                    f.read(1)
+
+                if raw == b"//":
+                    long_names = data
+                    continue
+                if raw in (b"/", b"__.SYMDEF", b"__.SYMDEF SORTED"):
+                    continue
+
+                if raw.startswith(b"/") and raw[1:].isdigit():
+                    off = int(raw[1:])
+                    end = long_names.find(b"/\n", off)
+                    if end < 0:
+                        continue
+                    name = long_names[off:end].decode()
+                    content = data
+                elif raw.startswith(b"#1/"):
+                    try:
+                        nl = int(raw[3:])
+                    except ValueError:
+                        continue
+                    name = data[:nl].rstrip(b"\x00").decode()
+                    content = data[nl:]
+                else:
+                    name = raw.rstrip(b"/").decode()
+                    content = data
+
+                if name == member:
+                    return content
+    except (OSError, UnicodeDecodeError):
+        return None
+    return None
 
 
 class IntervalList(object):

@@ -32,6 +32,7 @@ class Bam:
         self.depths = {}
         self.segments = {}
         self._depth_coords_cache = {}  # Cache for sorted coordinate lists
+        self.overall_depth_std = 0.0
         self.cnv_model = ""
         self.lr_model = ""
         self.sr_model = ""
@@ -83,128 +84,9 @@ class Bam:
         rev = {"A": "T", "C": "G", "T": "A", "G": "C", "N": "N"}
         return "".join([rev[s] for s in seq[-1::-1]])
 
-    def call_variant(self, output: str, param: Dict[str, Any]) -> None:
-        if self.use_existing and os.path.exists(output) and os.path.getsize(output):
-            return
-        if "ploidy" in param and param["ploidy"] != 2:
-            param["algo"] = "Haplotyper"
-        self.call_dnascope(output, param)
-
-    def call_dnascope(self, output: str, param: Dict[str, Any]) -> None:
-        if self.use_existing and os.path.exists(output) and os.path.getsize(output):
-            return
-        bam = self.clipped_bam if self.clipped_bam else self.bam
-        driver_opt = param.get("driver_opt", "") + f" -i {bam} -r {self.ref}"
-        algo_opt = param.get("algo_opt", "")
-        apply_model = ""
-        algo = "DNAscope" if "algo" not in param else param["algo"]
-        ploidy = param.get("ploidy", 2)
-        algo_opt += f" --ploidy {ploidy}"
-        given = param.get("given", "")
-        if given and os.path.exists(given):
-            algo_opt += f" --given {given} -d {given}"
-        if "model" in param and algo == "DNAscope" and ploidy == 2 and not given:
-            algo_opt += f" --model {param['model']}"
-            apply_model = param["model"]
-        if "region" in param:
-            driver_opt += f" --interval {param['region']}"
-        if "dbsnp" in param:
-            algo_opt += f" -d {param['dbsnp']}"
-        if apply_model:
-            tmp_output = output.replace("vcf", "tmp.vcf")
-        else:
-            tmp_output = output
-        cmd = (
-            f"{self.sentieon} driver {driver_opt} --algo {algo} {algo_opt} {tmp_output}"
-        )
-        self.logger.debug(f"Running command: {cmd}")
-        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
-        if result.returncode:
-            raise Exception(result.stderr)
-        if apply_model:
-            cmd = f"{self.sentieon} driver -r {self.ref} --algo DNAModelApply -v {tmp_output} --model {apply_model} {output}"
-            self.logger.debug(f"Running command: {cmd}")
-            result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
-            if result.returncode:
-                raise Exception(result.stderr)
-
-    def call_genotyper(self, output: str, param: Dict[str, Any]) -> None:
-        if self.use_existing and os.path.exists(output) and os.path.getsize(output):
-            return
-        bam = self.clipped_bam if self.clipped_bam else self.bam
-        driver_opt = param.get("driver_opt", "") + f" -i {bam} -r {self.ref}"
-        algo_opt = param.get("algo_opt", "")
-        if "region" in param:
-            driver_opt += f" --interval {param['region']}"
-        if "ploidy" in param:
-            algo_opt += f" --ploidy {param['ploidy']}"
-        if "given" in param:
-            algo_opt += f" --given {param['given']} -d {param['given']}"
-        if "dbsnp" in param:
-            algo_opt += f" -d {param['dbsnp']}"
-        cmd = (
-            f"{self.sentieon} driver {driver_opt} --algo Genotyper {algo_opt} {output}"
-        )
-        self.logger.debug(f"Running command: {cmd}")
-        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
-        if result.returncode:
-            raise Exception(result.stderr)
-
-    def call_cnvscope(self, output: str, param: Dict[str, Any]) -> None:
-        if self.use_existing and os.path.exists(output) and os.path.getsize(output):
-            return
-        driver_opt = param.get("driver_opt", "") + f" -i {self.bam} -r {self.ref}"
-        algo_opt = param.get("algo_opt", "")
-        if "region" in param:
-            driver_opt += f" --interval {param['region']}"
-        if "output_norm" in param:
-            algo_opt += f" --output_normalized {param['output_norm']}"
-        if "model" in param:
-            algo_opt += f" --model {param['model']}"
-        else:
-            raise Exception("Model is not specified for CNVscope.")
-        cmd = f"{self.sentieon} driver {driver_opt} --algo CNVscope {algo_opt} {output}"
-        self.logger.debug(f"Running command: {cmd}")
-        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
-        result.check_returncode()
-
-    def phase_vcf(self, in_vcf: str, out_vcf: str, ploidy: int = 2) -> None:
-        if self.use_existing and os.path.exists(out_vcf) and os.path.getsize(out_vcf):
-            return
-
-        # Haploid (ploidy=1) does not require phasing - create symlink instead
-        if ploidy == 1:
-            # Create symlink from input VCF to output VCF (phasing not needed)
-            if os.path.exists(out_vcf):
-                os.remove(out_vcf)
-            os.symlink(os.path.abspath(in_vcf), out_vcf)
-            # Also symlink the index if it exists
-            in_vcf_idx = in_vcf + ".tbi"
-            out_vcf_idx = out_vcf + ".tbi"
-            if os.path.exists(in_vcf_idx):
-                if os.path.exists(out_vcf_idx):
-                    os.remove(out_vcf_idx)
-                os.symlink(os.path.abspath(in_vcf_idx), out_vcf_idx)
-            else:
-                # Index doesn't exist, create it
-                cmd = f"{self.sentieon} util vcfindex {out_vcf}"
-                result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
-                result.check_returncode()
-            return
-
-        bam = self.clipped_bam if self.clipped_bam else self.bam
-        if ploidy == 2:
-            cmd = f"{self.whatshap} phase -o {out_vcf} {in_vcf} {bam} --reference {self.ref}"
-        else:
-            # For ploidy > 2, use polyphase
-            cmd = f"{self.whatshap} polyphase -o {out_vcf} {in_vcf} {bam} -p {ploidy} --reference {self.ref} -B 5 -t {self.threads}"
-        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
-        result.check_returncode()
-        cmd = f"{self.sentieon} util vcfindex {out_vcf}"
-        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
-        result.check_returncode()
-
     def get_depth(self, regions: Union[str, IntervalList]) -> List[Any]:
+        from .calling.cnv import call_depth
+
         if not regions:
             return []
         if isinstance(regions, str):
@@ -216,7 +98,7 @@ class Bam:
                 param["model"] = self.cnv_model
             param["region"] = regions.to_region_str(chrs)
             output = os.path.join(f"{self.prefix}.cnv.vcf.gz")
-            self.call_depth(output, param)
+            call_depth(self, output, param)
         depths = []
         for chr in regions.regions:
             if chr not in self.depths:
@@ -252,6 +134,8 @@ class Bam:
         return depths
 
     def get_segments(self, regions: Union[str, IntervalList]) -> Any:
+        from .calling.cnv import call_depth
+
         if not regions:
             return []
         if isinstance(regions, str):
@@ -263,7 +147,7 @@ class Bam:
                 param["model"] = self.cnv_model
             param["region"] = regions.to_region_str(chrs)
             output = f"{self.prefix}.cnv.{'.'.join(chrs)}.vcf.gz"
-            self.call_depth(output, param)
+            call_depth(self, output, param)
         segments = set()
         for chr, reg in regions.regions.items():
             if chr not in self.segments:
@@ -277,100 +161,6 @@ class Bam:
                 )
                 i += 2
         return segments
-
-    def call_depth(self, output: str, param: Dict[str, Any]) -> None:
-        orig_region = None
-        if "region" in param:
-            orig_region = param["region"]
-            chrs = set()
-            for parts in param["region"].split(","):
-                chrs.add(parts.split(":")[0])
-            param["region"] = ",".join(chrs)
-        prefix = output[: output.index(".vcf")] if ".vcf" in output else output
-        output_norm = param.get("output_norm", f"{prefix}.norm.tsv")
-        if orig_region:
-            tmp_output = prefix + ".tmp" + output[output.index(".vcf") :]
-            tmp_output_norm = prefix + ".tmp.norm.tsv"
-        else:
-            tmp_output = output
-            tmp_output_norm = output_norm
-        param["output_norm"] = tmp_output_norm
-        self.call_cnvscope(tmp_output, param)
-        if orig_region:
-            param["region"] = orig_region
-        vcf = vcflib.VCF(tmp_output)
-        depth_fields = ["contig", "start", "end", "MQ", "DP", "DP0"]
-        for v in vcf:
-            dp = v.samples[0]["DPS"]
-            dp0 = v.samples[0]["DP0S"]
-            self.segments.setdefault(v.chrom, []).append(
-                Segment(
-                    v.chrom,
-                    v.pos,
-                    v.end,
-                    v.info["CNT"],
-                    v.samples[0]["MQS"],
-                    dp[0] / self.dp_norm,
-                    dp[1] / self.dp_norm,
-                    dp0[0] / self.dp_norm,
-                    dp0[0] / self.dp_norm,
-                )
-            )
-        depth_df = pd.read_csv(tmp_output_norm, sep="\t")[depth_fields].copy()
-        depth_df["contig"] = depth_df["contig"].astype(str)
-        depth_df["DP"] /= self.dp_norm
-        depth_df["DP0"] /= self.dp_norm
-        high_mq_depth_df = depth_df[depth_df["MQ"] > 50]
-        self.overall_depth_std = high_mq_depth_df["DP"].std()
-        # Optimize DepthSegment creation using vectorized operations
-        self.depths = {}
-        self._depth_coords_cache = {}
-        for chr, group in depth_df.groupby("contig"):
-            # Use vectorized numpy operations instead of itertuples
-            values = group.values
-            chr_depths = [DepthSegment(*row) for row in values]
-            self.depths[chr] = chr_depths
-            # Cache coordinates directly from numpy arrays for better performance
-            self._depth_coords_cache[chr] = (
-                values[:, 1].tolist(),  # start column
-                values[:, 2].tolist(),  # end column
-            )
-        if orig_region:
-            orig_region_itv = IntervalList(region=orig_region)
-
-            # Vectorized filtering using the same logic as the earlier optimization
-            mask = pd.Series(False, index=depth_df.index)
-
-            for chr in orig_region_itv.regions:
-                chr_mask = depth_df["contig"] == chr
-                if not chr_mask.any():
-                    continue
-
-                chr_regions = orig_region_itv.regions[chr]
-                chr_rows = depth_df[chr_mask]
-
-                i = 0
-                while i < len(chr_regions):
-                    start, end = chr_regions[i], chr_regions[i + 1]
-
-                    # Vectorized overlap check
-                    overlap_mask = (chr_rows["start"] < end) & (chr_rows["end"] > start)
-                    mask[chr_rows[overlap_mask].index] = True
-
-                    i += 2
-
-            trim_depth_df = depth_df[mask]
-            trim_depth_df.to_csv(output_norm, sep="\t", index=None)
-            self.trim_to_region_vcf(orig_region, tmp_output, output)
-
-    def trim_to_region_vcf(self, region: str, in_vcf: str, out_vcf: str) -> None:
-        if region.endswith(".bed"):
-            region_opt = f"-T {region}"
-        else:
-            region_opt = f"-r {region}"
-        cmd = f"{self.bcftools} view {region_opt} {in_vcf} | {self.sentieon} util vcfconvert - {out_vcf}"
-        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
-        result.check_returncode()
 
     def init_bamh(self) -> pysam.AlignmentFile:
         if self.bamh:
@@ -715,6 +505,9 @@ class Bam:
         bam_key: str,
         params: Dict[str, Any],
     ) -> None:
+        from .calling.small_var import call_dnascope
+        from .calling.phasing import phase_vcf
+
         if "model" not in params:
             params["model"] = self.lr_model if self.long_read else self.sr_model
         seq_key = "long_read" if self.long_read else "short_read"
@@ -730,8 +523,8 @@ class Bam:
                     reg_name = "nodel" if region_id == "nodel" else "del" + region_id
                     out_vcf = f"{params['prefix']}.{gene.liftover_region_names[i]}.{bam_key}.{reg_name}.raw.vcf.gz"
                     phased_vcf = f"{params['prefix']}.{gene.liftover_region_names[i]}.{bam_key}.{reg_name}.phased.vcf.gz"
-                    self.call_dnascope(out_vcf, params)
-                    self.phase_vcf(out_vcf, phased_vcf, dd["cn"])
+                    call_dnascope(self, out_vcf, params)
+                    phase_vcf(self, out_vcf, phased_vcf, dd["cn"])
                     dd[seq_key]["raw_vcf"] = out_vcf
                     dd[seq_key]["phased_vcf"] = phased_vcf
         self.clipped_bam = None
@@ -1513,11 +1306,27 @@ class Phased_vcf:
 
     @staticmethod
     def vcf_grouper(*args):
+        # When sr and lr both call at the same position, the genotype source
+        # depends on the variant type:
+        #   - SNPs: take lr's GT (remapped to sr's alts). lr's better alignment
+        #     accuracy gives a more reliable per-base genotype.
+        #   - Indels (especially in STR / tandem-repeat regions): keep sr's GT.
+        #     lr is unreliable for repeat-length calls (HiFi error mode, ONT
+        #     even more so), and sr's left-anchored representation routinely
+        #     differs from lr's, so blindly carrying lr's GT over would either
+        #     point at alts sr never emitted (-> invalid VCF / `./.`) or land
+        #     in an inconsistent ploidy. Validated end-to-end against the
+        #     HG002 truth set: Joint-GT F1 differences vs lr-everywhere are
+        #     within noise, but the sr-for-indels path produces clean diploid
+        #     GTs and avoids the polyploid / `./.` records that crash aardvark
+        #     and other downstream consumers.
+
         def _key(v):
             return f"{v.ref}_{v.alt}"
 
         def _is_snp(v):
-            return len(v.alt) == 1 and len(v.alt[0]) == 1 and len(v.ref) == 1
+            alts = v.alt if isinstance(v.alt, list) else [v.alt]
+            return len(v.ref) == 1 and all(len(a) == 1 for a in alts)
 
         def pop():
             p, ra, k, v, i = heapq.heappop(q)
@@ -1525,6 +1334,66 @@ class Phased_vcf:
             if vv:
                 heapq.heappush(q, (vv.pos, _key(vv), k, vv, i))
             return p, ra, k, v, i
+
+        def _remap_gt(target, source):
+            # Build a GT string for `target` from `source`'s genotype. The
+            # two records may have different alt sets — or even different
+            # REF — at the same position. We re-express each allele index
+            # by looking up its sequence in `source`'s alt list and finding
+            # it in `target`'s alts. When the lookup fails, OR when
+            # `source.ref != target.ref` (so even allele 0 is a different
+            # sequence in each frame), emit "." rather than "0": claiming
+            # homref when the two callers disagree on representation would
+            # be a false-negative call. This matters at the SNP/indel
+            # collision edge (sr SNP `A→T`, lr indel `AT→A` at the same
+            # start pos): translating lr's "0" or "lr.alts[0]==A" to sr's
+            # "0" would say "no variant" while sr called a T.
+            gt = source.samples[0].get("GT")
+            if not gt:
+                return gt
+            src_alts = source.alt if isinstance(source.alt, list) else [source.alt]
+            tgt_alts = target.alt if isinstance(target.alt, list) else [target.alt]
+            refs_match = source.ref == target.ref
+
+            def _remap_one(a):
+                if a == ".":
+                    return "."
+                if a == "0":
+                    # "0" = source.ref. Safe to emit as "0" only when
+                    # target shares the same REF context.
+                    return "0" if refs_match else "."
+                try:
+                    seq = src_alts[int(a) - 1]
+                except (ValueError, IndexError):
+                    return "."
+                if seq in tgt_alts:
+                    return str(tgt_alts.index(seq) + 1)
+                # source's alt isn't in target's alt set. Don't fold to "0"
+                # — that would assert homref and silently disagree with the
+                # other caller. Emit missing so downstream sees the gap.
+                return "."
+
+            parts = re.split(r"([|/])", gt)
+            return "".join(
+                _remap_one(p) if i % 2 == 0 else p for i, p in enumerate(parts)
+            )
+
+        def _resolve(sr_rec, lr_rec):
+            # See header for the SNP/indel split. Two emit modes by design:
+            #  - SNP path: mutate `sr_rec` in place — overwrite GT with lr's
+            #    (remapped to sr's alts) and clear `line` so vcflib
+            #    regenerates the textual record from updated attrs at emit
+            #    time. Caller must not retain a pre-call reference to
+            #    sr_rec; vcflib iterators don't reuse memory, so the actual
+            #    flow is safe.
+            #  - Indel path: return sr_rec unchanged with `line` intact, so
+            #    emit writes sr's per-region VCF line byte-for-byte
+            #    (preserving phasing fields, pop annotations, etc.). The
+            #    `line=None` asymmetry between the two paths is intentional.
+            if _is_snp(sr_rec):
+                sr_rec.samples[0]["GT"] = _remap_gt(sr_rec, lr_rec)
+                sr_rec.line = None
+            return sr_rec
 
         assert len(args) == 3
         vcfs = args[:3]
@@ -1541,9 +1410,7 @@ class Phased_vcf:
             if cur_pos and p != cur_pos:
                 if cur[2]:
                     if cur[1]:
-                        cur[1].samples[0]["GT"] = cur[2].samples[0]["GT"]
-                        cur[1].line = None
-                        yield cur[1]
+                        yield _resolve(cur[1], cur[2])
                     elif cur[0] and _key(cur[0]) == _key(cur[2]):
                         yield cur[2]
                 cur = [None, None, None]
@@ -1551,9 +1418,7 @@ class Phased_vcf:
             cur[k] = v
         if cur[2]:
             if cur[1]:
-                cur[1].samples[0]["GT"] = cur[2].samples[0]["GT"]
-                cur[1].line = None
-                yield cur[1]
+                yield _resolve(cur[1], cur[2])
             elif cur[0] and _key(cur[0]) == _key(cur[2]):
                 yield cur[2]
 

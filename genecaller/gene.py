@@ -6,6 +6,8 @@ import copy
 import itertools
 from dataclasses import dataclass, field
 from genecaller.bam_process import CopyNumberModel, Phased_vcf
+from genecaller.calling.phasing import phase_vcf
+from genecaller.calling.small_var import call_variant
 from concurrent.futures import ThreadPoolExecutor
 import heapq
 import vcflib
@@ -1343,8 +1345,8 @@ class Gene:
 
         try:
             # Call variants and phase
-            bam.call_variant(out_vcf, params)
-            bam.phase_vcf(out_vcf, phased_vcf, params["ploidy"])
+            call_variant(bam, out_vcf, params)
+            phase_vcf(bam, out_vcf, phased_vcf, params["ploidy"])
 
             self.logger.debug(
                 f"Completed variant calling for {bam_type} {seq_key} bam in region {region}"
@@ -1590,6 +1592,13 @@ class Gene:
                         orig_vcf.close()
                     else:
                         orig_vars = []
+                    if seq_key == "short_read" and params.get("input_vcf"):
+                        orig_positions = {(v.chrom, v.pos) for v in orig_vars}
+                        lift_vars = [
+                            v
+                            for v in lift_vars
+                            if (v.chrom, v.pos) not in orig_positions
+                        ]
                     resolved[seq_key] = lift_vars, orig_vars
             # resolve short and long read
             if len(resolved) > 1:

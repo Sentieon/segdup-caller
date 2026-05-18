@@ -15,8 +15,10 @@ from genecaller.util import (
     get_data_file,
     get_software_versions,
     merge_gene_vcfs,
+    read_bundle_info,
 )
 from genecaller.bam_process import Bam
+from genecaller.calling.small_var import validate_pop_vcf_coverage
 from genecaller.gene import Gene
 from genecaller.genes import get_gene_class
 from genecaller import __version__
@@ -33,7 +35,7 @@ logger = get_logger(__name__)
 CALLING_MIN_VERSIONS = {
     "sentieon driver": Version("202503"),
     "whatshap": Version("2.3"),
-    "bcftools": Version("1.10"),
+    "bcftools": Version("1.16"),
     "samtools": Version("1.16"),
 }
 
@@ -145,6 +147,7 @@ def _init_read_data(input_files, ref, params, gene_name) -> dict:
         )
         if "lr_model" in params:
             lr_params["model"] = params["lr_model"]
+        lr_params.pop("input_vcf", None)
         long_bam = Bam(long, ref, lr_params)
         read_data["long_read"] = {"bam": long_bam, "params": lr_params}
     return read_data
@@ -217,8 +220,18 @@ class GeneCaller:
             f" * Genes: {' '.join([g.gene_names[0] for g in self.genes if g != 'main'])}"
         )
         logger.info(f" * short read model: {self.params['sr_model']}")
+        sr_vcf_id = read_bundle_info(
+            os.path.dirname(self.params["sr_model"])
+        ).get("SentieonVcfID")
+        if sr_vcf_id:
+            logger.info(f"   (population model, SentieonVcfID={sr_vcf_id})")
         if self.params.get("lr_model", None):
             logger.info(f" * long read model: {self.params['lr_model']}")
+            lr_vcf_id = read_bundle_info(
+                os.path.dirname(self.params["lr_model"])
+            ).get("SentieonVcfID")
+            if lr_vcf_id:
+                logger.info(f"   (population model, SentieonVcfID={lr_vcf_id})")
         logger.info(f" * Parallel threads: {self.params['threads']}")
         logger.info(f" * Parallel workers: {self.params['workers']}")
         logger.info(f" * Output directory: {self.params['outdir']}")
@@ -316,6 +329,7 @@ class GeneCaller:
             help="Also emit a single merged VCF concatenating every per-gene "
             "result VCF, with an INFO/GENE tag identifying the source gene.",
         )
+        parser.add_argument("--input_vcf", help=argparse.SUPPRESS)
         args = parser.parse_args()
 
         # Setup tools after argument parsing (so --version and --help work without dependencies)
@@ -341,6 +355,14 @@ class GeneCaller:
         config["main"]["sr_model"] = args.sr_model + "/dnascope.model"
         if args.lr_model:
             config["main"]["lr_model"] = args.lr_model + "/diploid_model"
+
+        # Confirm any population-flavor model bundle has a matching pop_vcf
+        # shipped with segdup-caller (data/pop_vcfs.yaml). Non-population
+        # bundles pass through. Exits with a clear message on miss.
+        bundle_paths = [args.sr_model]
+        if args.lr_model:
+            bundle_paths.append(args.lr_model)
+        validate_pop_vcf_coverage(bundle_paths)
 
         # If no genes specified, use all available genes
         if args.genes:
@@ -401,6 +423,19 @@ class GeneCaller:
         # Update the logger level since it was created before global level was set
         logger.setLevel(getattr(logging, args.log_level.upper()))
 
+        if args.input_vcf:
+            if not os.path.exists(args.input_vcf):
+                raise Exception(f"--input_vcf file does not exist: {args.input_vcf}")
+            if not os.path.exists(args.input_vcf + ".tbi"):
+                raise Exception(
+                    f"--input_vcf tabix index not found: {args.input_vcf}.tbi"
+                )
+            if args.long:
+                logger.warning(
+                    "--input_vcf only affects the short-read pipeline; "
+                    "long-read DNAscope calling is unchanged."
+                )
+
         self.params.update(
             {
                 "outdir": args.outdir,
@@ -418,6 +453,8 @@ class GeneCaller:
                 "merge_vcf": args.merge_vcf,
             }
         )
+        if args.input_vcf:
+            self.params["input_vcf"] = args.input_vcf
         self.args = args
         self.print_param()
 

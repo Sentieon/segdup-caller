@@ -1,0 +1,10 @@
+# Maps Sentieon VCF IDs to gene-region-trimmed population VCFs shipped with
+# segdup-caller. Keys are the SentieonVcfID string found in a model bundle's
+# bundle_info.json. Paths are resolved relative to genecaller/data/ via
+# util.get_data_file. Edit-in-place is safe; test/prepare_pop_vcf.py
+# --update-manifest will append new entries or replace existing ones.
+
+"population-hprc-v2.0+gnomad-v4.1.0-20251216":
+  pop_vcf: pop_vcfs/segdup_pop-population-hprc-v2.0_gnomad-v4.1.0-20251216.vcf.gz
+  assembly: hg38
+  description: "Population VCF HPRC 2.0"
