@@ -660,7 +660,17 @@ class GeneCaller:
             result, f"{self.params['outdir']}/{self.params['sample_name']}.yaml"
         )
         if not self.params["keep_tmp"]:
-            shutil.rmtree(self.params["tmpdir"])
+            try:
+                shutil.rmtree(self.params["tmpdir"])
+            except OSError as e:
+                # NFS/SMB mounts can leave .nfsXXXX silly-rename files or
+                # "file in use" entries that make the directory non-empty
+                # at teardown. The run output is already written, so don't
+                # propagate the failure.
+                logger.warning(
+                    f"Failed to clean up tmpdir {self.params['tmpdir']}: {e}. "
+                    f"Run output is unaffected; remove this directory manually if needed."
+                )
 
         if self.reset_tmpdir:
             os.environ.pop("SENTIEON_TMPDIR", None)
