@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from genecaller.bam_process import CopyNumberModel, Phased_vcf
 from genecaller.calling.phasing import phase_vcf
 from genecaller.calling.small_var import call_variant
+from genecaller import throttle
 from concurrent.futures import ThreadPoolExecutor
 import heapq
 import vcflib
@@ -1344,9 +1345,10 @@ class Gene:
         bam_type = params["bam_type"]
 
         try:
-            # Call variants and phase
-            call_variant(bam, out_vcf, params)
-            phase_vcf(bam, out_vcf, phased_vcf, params["ploidy"])
+            # One global slot held for the full call + phase.
+            with throttle.slot():
+                call_variant(bam, out_vcf, params)
+                phase_vcf(bam, out_vcf, phased_vcf, params["ploidy"])
 
             self.logger.debug(
                 f"Completed variant calling for {bam_type} {seq_key} bam in region {region}"

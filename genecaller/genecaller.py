@@ -26,7 +26,8 @@ import tempfile
 import copy
 from packaging.version import Version
 from concurrent.futures import ProcessPoolExecutor
-from multiprocessing import cpu_count
+from multiprocessing import cpu_count, Semaphore
+from genecaller import throttle
 from datetime import datetime
 
 logger = get_logger(__name__)
@@ -296,7 +297,9 @@ class GeneCaller:
             "-t",
             type=int,
             default=cpu_count(),
-            help="Number of parallel threads for gene processing (default: number of CPU count)",
+            help="Maximum concurrent variant-calling subprocesses across all gene "
+            "workers (each subprocess is multi-GB; this is the dominant memory "
+            "bound). Default: CPU count.",
         )
         parser.add_argument(
             "--workers",
@@ -547,10 +550,17 @@ class GeneCaller:
         results = {}
         max_workers = min(self.params["workers"], len(self.genes))
 
+        # Cap total concurrent sentieon driver subprocesses across all workers.
+        slot_sem = Semaphore(self.params["threads"])
+
         if max_workers > 1:
             # Use a process pool for parallel processing
             try:
-                with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                with ProcessPoolExecutor(
+                    max_workers=max_workers,
+                    initializer=throttle.init_worker,
+                    initargs=(slot_sem,),
+                ) as executor:
                     # submit task
                     future_results = {
                         executor.submit(process_single_gene, task): task[0].gene_names[
@@ -572,6 +582,7 @@ class GeneCaller:
                 logger.error(f"Parallel processing failed: {e}")
                 raise
         else:
+            throttle.set_local(slot_sem)
             for task in gene_tasks:
                 gene_name = task[0].gene_names[0]
                 try:

@@ -5,6 +5,7 @@ import subprocess
 import sys
 from .util import IntervalList, GeneMapping, get_data_file
 from .logging import get_logger
+from . import throttle
 import heapq
 from collections import namedtuple, Counter
 from scipy.stats import binom, gamma
@@ -330,7 +331,8 @@ class Bam:
             return results
         cmd = f"{self.sentieon} driver -r {self.ref} -i {self.bam} -i {' -i '.join(liftover_bams)} --interval {gene.chr} --algo ReadWriter {out_bam}"
         self.logger.debug(f"Running command: {cmd}")
-        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+        with throttle.slot():
+            result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
         result.check_returncode()
         return results
 
@@ -384,7 +386,8 @@ class Bam:
             cmd += f"{self.samtools} fastq -t |"
             cmd += f'{self.sentieon} minimap2 -y -a -x {x} -R "{rg}" {realign_ref} /dev/stdin |'
             cmd += f"{self.sentieon} util sort -o {liftover_tmp_bam} --sam2bam -i -"
-            result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+            with throttle.slot():
+                result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
             result.check_returncode()
         liftover_tmp_bamh = pysam.AlignmentFile(liftover_tmp_bam, "rb")
         out_bamh = self.init_outbamh(out_bam)
@@ -495,7 +498,8 @@ class Bam:
         self.clipped_bam = f"{self.tmpdir}/{base}.{gene.gene_names[0]}{ext}"
         cmd = f"{self.sentieon} driver -r {self.ref} --interval {interval} --interval_padding 2000 -i {self.bam} --algo ReadWriter {self.clipped_bam}"
         self.logger.debug(f"Running command: {cmd}")
-        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+        with throttle.slot():
+            result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
         result.check_returncode()
 
     def call_variant_all_regions(

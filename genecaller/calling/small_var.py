@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from .. import throttle
 from ..logging import get_logger
 from ..util import IntervalList, get_data_file, read_bundle_info
 
@@ -322,6 +323,7 @@ def call_genotyper(bam: Any, output: str, param: Dict[str, Any]) -> None:
         algo_opt += f" -d {param['dbsnp']}"
     cmd = f"{bam.sentieon} driver {driver_opt} --algo Genotyper {algo_opt} {output}"
     bam.logger.debug(f"Running command: {cmd}")
-    result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+    with throttle.slot():
+        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
     if result.returncode:
         raise Exception(result.stderr)

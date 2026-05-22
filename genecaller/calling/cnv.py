@@ -12,6 +12,7 @@ from typing import Any, Dict
 import pandas as pd
 import vcflib
 
+from .. import throttle
 from ..util import IntervalList
 
 
@@ -30,7 +31,8 @@ def call_cnvscope(bam: Any, output: str, param: Dict[str, Any]) -> None:
         raise Exception("Model is not specified for CNVscope.")
     cmd = f"{bam.sentieon} driver {driver_opt} --algo CNVscope {algo_opt} {output}"
     bam.logger.debug(f"Running command: {cmd}")
-    result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+    with throttle.slot():
+        result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
     result.check_returncode()
 
 
