@@ -596,6 +596,12 @@ class GeneCaller:
         return results
 
     def call(self) -> None:
+        if not os.environ.get("SENTIEON_LICENSE"):
+            logger.error(
+                "SENTIEON_LICENSE environment variable is not set. "
+                "Please set it (e.g. export SENTIEON_LICENSE=<server:port> or path to license file) before running."
+            )
+            sys.exit(1)
         self.load_params()
         self._validate_input_files()
 
