@@ -49,7 +49,7 @@ from .polyphase_short import (
 )
 
 # Long-read tunables
-MIN_CONNECTING_READS_LONG = 1     # one long read can connect many variants
+MIN_CONNECTING_READS_LONG = 2     # one long read can connect many variants
 N_REFINEMENT_ITERS = 1            # one k-modes pass after anchor seeding
 
 logger = get_logger("polyphase_long")
@@ -216,6 +216,13 @@ def polyphase_long_reads(
         assigned_per_site.append(assigned)
         confident_per_site[c] = conf
 
+    # Block boundaries from PER-CLUSTER connectivity (min over clusters of reads
+    # spanning each adjacent pair), same as the short-read path. Breaking where a
+    # haplotype is weakly linked isolates phase-switch points so the downstream
+    # decomposition (assign(), per-PS-block) can't mis-assign an over-merged
+    # switched run. Long reads keep blocks long anyway (per-cluster connectivity
+    # stays high), so this stays well above whatshap's fragmentation while staying
+    # decomposition-safe.
     connectivity = _connectivity_within_clusters(matrix, labels, ploidy)
     variant_positions = [variants[vi]["pos"] for vi in phaseable_idx]
     ps_per_col = _make_phase_blocks(

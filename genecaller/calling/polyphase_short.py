@@ -260,6 +260,40 @@ def _farthest_first_init(matrix: np.ndarray, K: int, rng: np.random.Generator) -
     return np.array(chosen[:K], dtype=np.int64)
 
 
+def _reseed_empty_clusters(
+    matrix: np.ndarray,
+    labels: np.ndarray,
+    centers: np.ndarray,
+    K: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Give every empty cluster a member (the worst-fit read from a larger cluster).
+
+    Plain k-modes has no empty-cluster handling: once a cluster loses all members
+    its center becomes all-unobserved (distance 1.0 to every read), so it stays
+    dead and one cluster can swallow the data — which on real polyploid regions
+    leaves the per-site confidence gate with a never-satisfiable cluster and emits
+    nothing. Re-seeding the worst-fit read (highest distance to its own center)
+    into each empty cluster breaks that degeneracy. Deterministic.
+    """
+    n_reads = matrix.shape[0]
+    for _ in range(K):
+        counts = np.bincount(labels, minlength=K)
+        empty = np.where(counts == 0)[0]
+        if empty.size == 0:
+            break
+        dists = np.stack([_pairwise_to_center(matrix, centers[k]) for k in range(K)], axis=0)
+        assigned_d = dists[labels, np.arange(n_reads)]
+        donor_ok = counts[labels] > 1  # don't empty another cluster
+        if not donor_ok.any():
+            break
+        cand = np.where(donor_ok)[0]
+        worst = int(cand[np.argmax(assigned_d[cand])])
+        k = int(empty[0])
+        labels[worst] = k
+        centers[k] = matrix[worst].copy()
+    return labels, centers
+
+
 def _kmodes_once(
     matrix: np.ndarray,
     K: int,
@@ -277,6 +311,8 @@ def _kmodes_once(
         # Stack distances: shape (K, n_reads)
         dists = np.stack([_pairwise_to_center(matrix, centers[k]) for k in range(K)], axis=0)
         new_labels = np.argmin(dists, axis=0).astype(np.int32)
+        # Rescue degenerate (empty) clusters so one cluster can't swallow the data.
+        new_labels, centers = _reseed_empty_clusters(matrix, new_labels, centers, K)
         if np.array_equal(new_labels, labels):
             labels = new_labels
             break
@@ -344,7 +380,8 @@ def _assign_clusters_to_gt(
     counts_at_site: shape (K, max_allele+1) — vote count per cluster per allele.
     gt_multiset: list of K alleles (with repeats), e.g. [0,0,1,1].
     Returns (assigned_alleles_per_cluster, confident_bool).
-    `confident` is False if any cluster has zero observations at this site.
+    `confident` is True when at least K-1 clusters are locally well-supported
+    (the one remaining cluster's allele is then fixed by the multiset assignment).
     """
     # Build a profit matrix M[k, slot] = count of cluster k for gt_multiset[slot]
     M = np.array(
@@ -368,9 +405,13 @@ def _assign_clusters_to_gt(
                 best_val = v
                 slot_for_cluster = list(perm)
     assigned = [gt_multiset[slot] for slot in slot_for_cluster]
-    # Confidence: every cluster had at least one observation
+    # Confidence: at least K-1 clusters locally well-supported. Requiring *every*
+    # cluster to be covered at every site is too strict on real data — one
+    # globally-thin cluster would otherwise zero out the whole region. The lone
+    # uncovered cluster's allele is fixed by the multiset assignment.
     cluster_total = counts_at_site.sum(axis=1)
-    confident = bool(np.all(cluster_total >= MIN_READS_PER_CLUSTER_AT_SITE))
+    n_supported = int((cluster_total >= MIN_READS_PER_CLUSTER_AT_SITE).sum())
+    confident = n_supported >= K - 1
     return assigned, confident
 
 
@@ -406,29 +447,58 @@ def _make_phase_blocks(
 ) -> List[int]:
     """Assign a phase-set ID to each phaseable column, or 0 if unphased.
 
-    PS ID = position-1-based of first phaseable variant in the block (whatshap convention).
-    A block is a maximal run of confident sites with sufficient connectivity to the next.
+    Blocks are bounded by *connectivity*: a block is a maximal run of columns
+    joined by >= min_conn co-observing reads. Within a block every confident site
+    shares one PS (= 1-based position of the block's first confident site, the
+    whatshap convention); locally non-confident sites stay unphased (ps 0) but do
+    NOT split the block — a single uncertain site can't fragment an otherwise
+    well-linked region (which is what kept the blocks much shorter than whatshap).
+    A block needs >= 2 confident sites to be emitted.
     """
     n = len(confident_per_site)
     ps = [0] * n
     i = 0
     while i < n:
-        if not confident_per_site[i]:
-            i += 1
-            continue
+        # extend a maximal connectivity run [i, j]
         j = i
-        while (
-            j + 1 < n
-            and confident_per_site[j + 1]
-            and connectivity[j] >= min_conn
-        ):
+        while j + 1 < n and connectivity[j] >= min_conn:
             j += 1
-        if j > i:  # block must contain ≥2 sites to be useful
-            block_id = variant_positions[i] + 1
-            for k in range(i, j + 1):
+        conf_cols = [k for k in range(i, j + 1) if confident_per_site[k]]
+        if len(conf_cols) >= 2:  # need >= 2 phased sites to be a useful block
+            block_id = variant_positions[conf_cols[0]] + 1
+            for k in conf_cols:
                 ps[k] = block_id
         i = j + 1
     return ps
+
+
+def _blocks_by_connectivity(matrix: np.ndarray, min_conn: int) -> List[Tuple[int, int]]:
+    """Segment columns into maximal runs joined by >= min_conn co-observing reads.
+
+    Connectivity here is label-free: the number of reads observing both adjacent
+    columns. Short reads only span a handful of sites, so global k-modes across the
+    whole region collapses into one cluster; carving the region into stretches of
+    genuine local read overlap and clustering *within* each stretch keeps the
+    problem well-posed. Long reads span most sites, so they fall into a single
+    block and this reduces to whole-region clustering.
+
+    Returns a list of inclusive (lo, hi) column-index ranges with hi > lo.
+    """
+    n_cols = matrix.shape[1]
+    if n_cols < 2:
+        return []
+    obs = matrix >= 0
+    conn = (obs[:, :-1] & obs[:, 1:]).sum(axis=0)
+    blocks: List[Tuple[int, int]] = []
+    i = 0
+    while i < n_cols:
+        j = i
+        while j + 1 < n_cols and conn[j] >= min_conn:
+            j += 1
+        if j > i:
+            blocks.append((i, j))
+        i = j + 1
+    return blocks
 
 
 # -- main driver ------------------------------------------------------------
@@ -469,26 +539,49 @@ def polyphase_short_reads(
         return
 
     max_allele = int(max(len(variants[i]["alt"]) for i in phaseable_idx))
-    labels, _centers = _kmodes(matrix, ploidy, max_allele)
-    counts = _per_site_cluster_counts(matrix, labels, ploidy, max_allele)
-
-    # Per-site assignment + confidence
-    assigned_per_site: List[List[int]] = []
-    confident_per_site = np.zeros(n_phaseable, dtype=bool)
-    for c, vi in enumerate(phaseable_idx):
-        gt_ms = variants[vi]["gt"]
-        if len(gt_ms) != ploidy:
-            # Input GT ploidy mismatch — pass through unphased.
-            assigned_per_site.append([])
-            confident_per_site[c] = False
-            continue
-        assigned, conf = _assign_clusters_to_gt(counts[:, c, :], list(gt_ms), ploidy)
-        assigned_per_site.append(assigned)
-        confident_per_site[c] = conf
-
-    connectivity = _connectivity_within_clusters(matrix, labels, ploidy)
     variant_positions = [variants[vi]["pos"] for vi in phaseable_idx]
-    ps_per_col = _make_phase_blocks(confident_per_site, connectivity, variant_positions)
+
+    # Block-local clustering: cluster reads within each locally-connected stretch
+    # of sites (see _blocks_by_connectivity) rather than globally, then assign
+    # alleles and form PS sub-blocks within each stretch.
+    assigned_per_site: List[List[int]] = [[] for _ in range(n_phaseable)]
+    confident_per_site = np.zeros(n_phaseable, dtype=bool)
+    ps_per_col = [0] * n_phaseable
+
+    for lo, hi in _blocks_by_connectivity(matrix, MIN_CONNECTING_READS):
+        cols = list(range(lo, hi + 1))
+        sub = matrix[:, cols]
+        sub = sub[(sub >= 0).sum(axis=1) >= MIN_VARIANTS_PER_READ]  # reads spanning this block
+        if sub.shape[0] < ploidy:
+            continue
+        labels, _centers = _kmodes(sub, ploidy, max_allele)
+        counts = _per_site_cluster_counts(sub, labels, ploidy, max_allele)
+
+        local_assigned: List[List[int]] = []
+        local_conf = np.zeros(len(cols), dtype=bool)
+        for c, col in enumerate(cols):
+            gt_ms = variants[phaseable_idx[col]]["gt"]
+            if len(gt_ms) != ploidy:
+                local_assigned.append([])
+                continue
+            assigned, conf = _assign_clusters_to_gt(counts[:, c, :], list(gt_ms), ploidy)
+            local_assigned.append(assigned)
+            local_conf[c] = conf
+
+        # PS sub-blocks bounded by PER-CLUSTER connectivity (min over clusters of
+        # reads spanning each adjacent pair). Breaking where a haplotype is weakly
+        # linked isolates phase-switch points, so a local clustering switch can't
+        # contaminate a whole over-merged block's gene-copy assignment downstream
+        # (assign() decomposes a PS block as one unit). Raw connectivity merged
+        # across switches and produced clustered FP calls in the decomposition.
+        conn_local = _connectivity_within_clusters(sub, labels, ploidy)
+        local_ps = _make_phase_blocks(
+            local_conf, conn_local, [variant_positions[col] for col in cols]
+        )
+        for c, col in enumerate(cols):
+            assigned_per_site[col] = local_assigned[c]
+            confident_per_site[col] = bool(local_conf[c])
+            ps_per_col[col] = local_ps[c]
 
     # Emit
     _emit_vcf(in_vcf, out_vcf, variants, phaseable_idx, assigned_per_site, ps_per_col, bam.sentieon)
