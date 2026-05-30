@@ -1515,8 +1515,42 @@ class Gene:
                             ):
                                 matched.matched_region.append(m)
 
+    def _propagate_liftover_phased_vcf(self) -> None:
+        """Attach the liftover phased VCF onto merged_regions after calling.
+
+        merge_regions_by_cn() runs *before* variant calling (it sets up the
+        CN/dup structure that call_small_var and detect_gene_conversions need),
+        so its insert()-based phased_vcf merge can't carry the liftover phased
+        VCF — it doesn't exist yet. call_small_var() then writes phased_vcf
+        ['liftover'] onto merged_liftover_segdup_regions, a list that is disjoint
+        from merged_regions (insert() deep-copies). Without this step the
+        'liftover' key never reaches the regions resolve_phased() walks, so
+        assign() is skipped for every region (regressed in 2d4866e, which moved
+        the merge out of resolve_phased to before calling).
+
+        Here we re-link them after calling: each dup'd merged_region (dup=j+1)
+        takes the liftover phased VCF of the overlapping region in
+        merged_liftover_segdup_regions[j]. Pure dict copy — idempotent, no
+        structural mutation.
+        """
+        for r in self.merged_regions:
+            if not r.dup:
+                continue
+            gi = r.dup - 1
+            if gi < 0 or gi >= len(self.merged_liftover_segdup_regions):
+                continue
+            r_itv = IntervalList(region=r.region)
+            for lr in self.merged_liftover_segdup_regions[gi]:
+                if r_itv.intersect(lr.region).size() <= 0:
+                    continue
+                for seq_key, vcf_dict in lr.phased_vcf.items():
+                    if "liftover" in vcf_dict:
+                        r.phased_vcf.setdefault(seq_key, {})["liftover"] = vcf_dict["liftover"]
+                break
+
     def resolve_phased(self, params: Dict[str, Any]) -> None:
         # Now all regions are CN-distinct with full info about its CN and its matching segdup
+        self._propagate_liftover_phased_vcf()
         # For each region, resolve phased small variants
         all_vars = []
         vcf_proc = Phased_vcf(self, self.read_data)
