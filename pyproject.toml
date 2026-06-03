@@ -25,8 +25,7 @@ dependencies = [
     "packaging>=22.0",
     "scipy>=1.0",
     "pandas>=1.0",
-    "vcflib>=1.0",
-    "whatshap>=2.3"
+    "vcflib>=1.0"
 ]
 
 # Dynamic version from __init__.py

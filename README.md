@@ -20,7 +20,7 @@ Segdup caller supports additional long-read data from **PacBio HiFi** or **Oxfor
 
 - **Copy Number Determination**: Statistical modeling to determine copy number states for each gene region using maximum a posteriori (MAP) optimization with gene-specific Bayesian priors
 - **Accurate Variant Calling in Complex Regions**: Specialized algorithms for genes with highly similar paralogs and pseudogenes
-- **Haplotype Phasing**: Integrates whatshap for accurate phasing and assignment of variants to specific gene copies
+- **Haplotype Phasing**: Built-in read-backed phasing for accurate phasing and assignment of variants to specific gene copies
 - **Gene conversion detection**: Detects gene conversion and fusion detection for select genes
 - **Star allele calling**: Call star alleles for CYP2D6
 
@@ -62,7 +62,6 @@ pip install ./segdup-caller
 - [Sentieon Genomics software (version 202503 or later)](https://www.sentieon.com/free-trial/)
 - [samtools (version 1.16 or later)](http://www.htslib.org/)
 - [bcftools (version 1.16 or later)](http://www.htslib.org/)
-- [whatshap (version 2.3 or later)](https://whatshap.readthedocs.io/)
 
 ---
 

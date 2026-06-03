@@ -35,7 +35,6 @@ logger = get_logger(__name__)
 
 CALLING_MIN_VERSIONS = {
     "sentieon driver": Version("202503"),
-    "whatshap": Version("2.3"),
     "bcftools": Version("1.16"),
     "samtools": Version("1.16"),
 }
