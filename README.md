@@ -10,7 +10,7 @@ The Sentieon Segdup Gene Caller has not been validated for clinical diagnostic p
 
 ---
 
-Segdup caller currently supports whole-genome sequencing (WGS) paired-end short reads of 150 bp length, such as those from Illumina, Element Biosciences, MGI, and others. Sentieon provides platform-specific short-read variant calling models. For accurate copy number calling and phasing, Segdup caller recommends a minimum of 20× coverage, with 30× being ideal.
+Segdup caller currently supports short reads whole-genome sequencing (WGS), such as those from Illumina, Element Biosciences, MGI, and others. Sentieon provides platform-specific short-read variant calling models. For accurate copy number calling and phasing, Segdup caller recommends a minimum of 20× coverage, with 30× being ideal.
 
 Segdup caller supports additional long-read data from **PacBio HiFi** or **Oxford Nanopore**, aligned BAM files, using the corresponding Sentieon models.
 
@@ -20,7 +20,7 @@ Segdup caller supports additional long-read data from **PacBio HiFi** or **Oxfor
 
 - **Copy Number Determination**: Statistical modeling to determine copy number states for each gene region using maximum a posteriori (MAP) optimization with gene-specific Bayesian priors
 - **Accurate Variant Calling in Complex Regions**: Specialized algorithms for genes with highly similar paralogs and pseudogenes
-- **Haplotype Phasing**: Built-in read-backed phasing for accurate phasing and assignment of variants to specific gene copies
+- **Haplotype Phasing**: Accurate phasing and assignment of variants to specific gene copies
 - **Gene conversion detection**: Detects gene conversion and fusion detection for select genes
 - **Star allele calling**: Call star alleles for CYP2D6
 
