@@ -1,16 +1,10 @@
 """VCF phasing dispatch.
 
-Method selection:
-  ploidy == 1                          → symlink (nothing to phase)
-  ploidy == 2                          → whatshap phase
-  ploidy > 2, short reads (default)    → polyphase_short_reads (k-modes)
-  ploidy > 2, long reads (default)     → polyphase_long_reads (anchor extension)
-  method override                      → bypass auto-selection
-
-`method` accepts: "auto" (default), "whatshap", "kmodes", "anchor".
-"whatshap" still routes to `whatshap phase` for diploid and
-`whatshap polyphase` for higher ploidy — useful as a fallback while validating
-the in-process phasers.
+Auto (default): ploidy==1 → symlink; short reads → k-modes; long reads → anchor.
+The in-process phasers preserve the input genotype (only add phase, never
+re-genotype) at every ploidy. `method` also accepts "kmodes", "anchor", and
+"whatshap"; whatshap is an opt-in fallback resolved from PATH — not a dependency,
+never auto-invoked.
 """
 
 import os
@@ -46,8 +40,9 @@ def phase_vcf(
 
     method = (method or "auto").lower()
     auto = method == "auto"
-    use_kmodes = method == "kmodes" or (auto and ploidy > 2 and not bam.long_read)
-    use_anchor = method == "anchor" or (auto and ploidy > 2 and bam.long_read)
+    # auto: short reads → k-modes, long reads → anchor (any ploidy >= 2)
+    use_kmodes = method == "kmodes" or (auto and not bam.long_read)
+    use_anchor = method == "anchor" or (auto and bam.long_read)
 
     if use_kmodes:
         from .polyphase_short import polyphase_short_reads
@@ -58,15 +53,17 @@ def phase_vcf(
         polyphase_long_reads(bam, in_vcf, out_vcf, ploidy)
         return
 
+    # method == "whatshap": opt-in fallback; whatshap resolved from PATH, not a dependency.
+    whatshap = getattr(bam, "whatshap", None) or "whatshap"
     bam_path = bam.clipped_bam if bam.clipped_bam else bam.bam
     if ploidy == 2:
         cmd = (
-            f"{bam.whatshap} phase -o {out_vcf} {in_vcf} {bam_path} "
+            f"{whatshap} phase -o {out_vcf} {in_vcf} {bam_path} "
             f"--reference {bam.ref}"
         )
     else:
         cmd = (
-            f"{bam.whatshap} polyphase -o {out_vcf} {in_vcf} {bam_path} "
+            f"{whatshap} polyphase -o {out_vcf} {in_vcf} {bam_path} "
             f"-p {ploidy} --reference {bam.ref} -B 5 -t {bam.threads}"
         )
     result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
