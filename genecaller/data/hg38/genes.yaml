@@ -1,7 +1,7 @@
 CFH:
   gene_strand: "+"
   diff_vcf:
-  - data/CFH.vcf.gz
+  - data/hg38/CFH.vcf.gz
   gene_names:
   - CFH
   gene_regions:
@@ -19,7 +19,7 @@ CFH:
     - chr1:196786960-196789632,chr1:196789633-196809521,chr1:196812529-196817005,chr1:196817006-196824780,chr1:196742575-196747504
   - - CFHB
     - chr1:196911484-196914172,chr1:196914546-196934426,chr1:196934427-196938898,chr1:196941030-196948803,chr1:196827190-196832189
-  map: data/CFHA_CFHB.dat
+  map: data/hg38/CFHA_CFHB.dat
   config:
     cn_priors:
       CFH: {0: 0.0005, 1: 0.0005, 2: 0.998, 3: 0.0005, 4: 0.0005}  # Very conserved
@@ -29,20 +29,20 @@ CFH:
 CYP11B1:
   gene_strand: "-"
   diff_vcf:
-  - data/CYP11B1.vcf.gz
-  - data/CYP11B2.vcf.gz
+  - data/hg38/CYP11B1.vcf.gz
+  - data/hg38/CYP11B2.vcf.gz
   gene_names:
   - CYP11B1
   - CYP11B2
   gene_regions:
   - chr8:142873164-142879950
   - chr8:142910764-142917977
-  map: data/CYP11B1_CYP11B2.dat
+  map: data/hg38/CYP11B1_CYP11B2.dat
 CYP2D6:
   gene_strand: "-"
   diff_vcf:
-  - data/CYP2D6.vcf.gz
-  - data/CYP2D7.vcf.gz
+  - data/hg38/CYP2D6.vcf.gz
+  - data/hg38/CYP2D7.vcf.gz
   gene_names:
   - CYP2D6
   - CYP2D7
@@ -54,7 +54,7 @@ CYP2D6:
     - chr22:42123192-42125960,chr22:42125961-42132193
   - - CYP2D7
     - chr22:42135344-42138112,chr22:42139675-42145873
-  map: data/CYP2D6_CYP2D7.dat
+  map: data/hg38/CYP2D6_CYP2D7.dat
   cnv_exclude_regions: []
   recombination_regions:
     - chr22:42126500-42126800  # Exon 9 - for CYP2D6*36 & *4N
@@ -71,20 +71,20 @@ CYP2D6:
     gamma_scale: 0.67        # Scale parameter (β), mean = α×β = 2.0
     transition_rate_background: 1e-8  # Very sticky in stable exonic regions
     transition_rate_hotspot: 0.001    # Loose in recombination hotspots
-    star_allele_file: data/cyp2d6_star_alleles.tsv
-    backbone_file: data/cyp2d6_backbone.tsv
+    star_allele_file: data/hg38/cyp2d6_star_alleles.tsv
+    backbone_file: data/hg38/cyp2d6_backbone.tsv
 GBA:
   gene_strand: "-"
   diff_vcf:
-  - data/GBA1.vcf.gz
-  - data/GBAP1.vcf.gz
+  - data/hg38/GBA1.vcf.gz
+  - data/hg38/GBAP1.vcf.gz
   gene_names:
   - GBA1
   - GBAP1
   gene_regions:
   - chr1:155230976-155241868
   - chr1:155210382-155219657
-  map: data/GBA1_GBAP1.dat
+  map: data/hg38/GBA1_GBAP1.dat
   liftover_regions:
   - - GBA1
     - chr1:155230976-155237609,chr1:155237930-155238947,chr1:155239581-155240164,chr1:155240477-155241868
@@ -101,20 +101,20 @@ GBA:
 NCF1:
   gene_strand: "+"
   diff_vcf:
-  - data/NCF1.vcf.gz
-  - data/NCF1B.vcf.gz
+  - data/hg38/NCF1.vcf.gz
+  - data/hg38/NCF1B.vcf.gz
   gene_names:
   - NCF1
   - NCF1B
   gene_regions:
   - chr7:74769021-74792317
   - chr7:73215625-73238945
-  map: data/NCF1_NCF1B.dat
+  map: data/hg38/NCF1_NCF1B.dat
 PMS2:
   gene_strand: "-"
   diff_vcf:
-  - data/PMS2.vcf.gz
-  - data/PMS2CL.vcf.gz
+  - data/hg38/PMS2.vcf.gz
+  - data/hg38/PMS2CL.vcf.gz
   gene_names:
   - PMS2
   - PMS2CL
@@ -126,7 +126,7 @@ PMS2:
   - [PMS2_exon14.DEL, chr7:5977466-5977633]
   - [PMS2_exon10.DEL, chr7:5989800-5989955]
   - [PMS2CL_exon13-14.DEL,     chr7:6748000-6750000]
-  map: data/PMS2_PMS2CL.dat
+  map: data/hg38/PMS2_PMS2CL.dat
   liftover_regions:
   - - PMS2
     # exons 11-15 + tail, (Exon 10 unique gap), Intron 9, exon 9 (upstream)
@@ -142,6 +142,7 @@ PMS2:
   config:
     prior_type: gaussian  # Conservative symmetric prior
     cn_prior_std: 0.5
+    psv_manifest: data/hg38/pms2_psv_manifest.json
     transition_rate_background: 1e-8  # Very sticky in stable exonic regions
     transition_rate_hotspot: 0.01    # Loose in recombination hotspots
     # Iterative CNV-conversion detection
@@ -156,8 +157,8 @@ PMS2:
 RCCX:
   gene_strand: "+"
   diff_vcf:
-  - data/RCCX1.vcf.gz
-  - data/RCCX2.vcf.gz
+  - data/hg38/RCCX1.vcf.gz
+  - data/hg38/RCCX2.vcf.gz
   gene_names:
   - RCCX1
   - RCCX2
@@ -199,15 +200,15 @@ RCCX:
   - [chr6:32040100-32040600, 5e-4]
   - [chr6:32041100-32041200, 2e-3]
   - [chr6:32041200-32045326, 1e-4]
-  map: data/RCCX1_RCCX2.dat
+  map: data/hg38/RCCX1_RCCX2.dat
   config:
    dp_norm: 1.1
    max_move_size: 3
 SMN1:
   gene_strand: "+"
   diff_vcf:
-  - data/SMN1.vcf.gz
-  - data/SMN2.vcf.gz
+  - data/hg38/SMN1.vcf.gz
+  - data/hg38/SMN2.vcf.gz
   gene_names:
   - SMN1
   - SMN2
@@ -217,7 +218,7 @@ SMN1:
   longdel: 
   - [SMN1_3.5kdel, chr5:70917700-70921260]
   - [SMN2_6.3kdel, chr5:70072861-70079172]
-  map: data/SMN1_SMN2.dat
+  map: data/hg38/SMN1_SMN2.dat
   config:
     longdel_priors:
       SMN1_3.5kdel: 0.02    # Less common deletion
@@ -225,20 +226,20 @@ SMN1:
 STRC:
   gene_strand: "-"
   diff_vcf:
-  - data/STRC.vcf.gz
-  - data/STRCP1.vcf.gz
+  - data/hg38/STRC.vcf.gz
+  - data/hg38/STRCP1.vcf.gz
   gene_names:
   - STRC
   - STRCP1
   gene_regions:
   - chr15:43599003-43620000
   - chr15:43698817-43719466
-  map: data/STRC_STRCP1.dat
+  map: data/hg38/STRC_STRCP1.dat
 HBA:
   gene_strand: "+"
   tandem: true
   diff_vcf:
-  - data/HBA.vcf.gz
+  - data/hg38/HBA.vcf.gz
   gene_names:
   - HBA
   gene_regions:
@@ -252,12 +253,12 @@ HBA:
   ignore_nondup: false
   config:
    dp_norm: 1.12
-  map: data/HBA.dat
+  map: data/hg38/HBA.dat
 IKBKG:
   gene_strand: "+"
   diff_vcf:
-  - data/IKBKG.vcf.gz
-  - data/IKBKGP1.vcf.gz
+  - data/hg38/IKBKG.vcf.gz
+  - data/hg38/IKBKGP1.vcf.gz
   gene_names:
   - IKBKG
   - IKBKGP1
@@ -278,7 +279,7 @@ IKBKG:
    - [IKBKGP1_5prime, chrX:154632000-154634747]
    - [IKBKGP1del, chrX:154634748-154646416]
    - [IKBKGP1_3prime, chrX:154646417-154648856]
-  map: data/IKBKG_IKBKGP1.dat
+  map: data/hg38/IKBKG_IKBKGP1.dat
   # Sex-specific ploidy configuration for non-PAR X-linked gene
   sex_chromosome: "X"
   requires_sex: true
@@ -305,4 +306,4 @@ main:
   cnv_model: data/SentieonGeneCaller0.1.bundle/cnv.model
   min_map_qual: 45
   cn_prior_std: 2
-  conversion_db: data/known_gene_conversions.tsv
+  conversion_db: data/hg38/known_gene_conversions.tsv

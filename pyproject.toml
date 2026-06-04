@@ -46,7 +46,7 @@ segdup-caller = "genecaller.__main__:main"
 file = "LICENSE"
 
 [tool.setuptools.package-data]
-genecaller = ["data/*"]
+genecaller = ["data/*", "data/**/*"]
 
 [project.urls]
 Homepage = "https://github.com/Sentieon/segdup-caller"

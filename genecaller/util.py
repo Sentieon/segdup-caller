@@ -515,6 +515,32 @@ class IntervalList(object):
 
 Contig = collections.namedtuple("Contig", "length offset width skip")
 
+# Autosome + sex chromosome lengths per assembly (no "chr" prefix).
+_GRCH38_LENGTHS = {
+    "1": 248956422, "2": 242193529, "3": 198295559, "4": 190214555,
+    "5": 181538259, "6": 170805979, "7": 159345973, "8": 145138636,
+    "9": 138394717, "10": 133797422, "11": 135086622, "12": 133275309,
+    "13": 114364328, "14": 107043718, "15": 101991189, "16": 90338345,
+    "17": 83257441, "18": 80373285, "19": 58617616, "20": 64444167,
+    "21": 46709983, "22": 50818468, "X": 156040895, "Y": 57227415,
+}
+_GRCH37_LENGTHS = {
+    "1": 249250621, "2": 243199373, "3": 198022430, "4": 191154276,
+    "5": 180915260, "6": 171115067, "7": 159138663, "8": 146364022,
+    "9": 141213431, "10": 135534747, "11": 135006516, "12": 133851895,
+    "13": 115169878, "14": 107349540, "15": 102531392, "16": 90354753,
+    "17": 81195210, "18": 78077248, "19": 59128983, "20": 63025520,
+    "21": 48129895, "22": 51304566, "X": 155270560, "Y": 59373566,
+}
+
+# build -> (assembly lengths, contig-name prefix); hg19 and b37 share GRCh37
+# lengths and differ only by the "chr" prefix on contig names.
+_BUILDS = {
+    "hg38": (_GRCH38_LENGTHS, "chr"),
+    "hg19": (_GRCH37_LENGTHS, "chr"),
+    "b37": (_GRCH37_LENGTHS, ""),
+}
+
 
 class Reference(object):
     def __init__(self, path: str) -> None:
@@ -557,6 +583,17 @@ class Reference(object):
 
     def __iter__(self) -> Any:
         return iter(self.index.items())
+
+    def build(self) -> str:
+        """Identify the genome build (hg38/hg19/b37); every autosome and sex chromosome must match exactly."""
+        for name, (lengths, prefix) in _BUILDS.items():
+            if all(
+                (ci := self.index.get(prefix + chrom)) is not None
+                and ci.length == length
+                for chrom, length in lengths.items()
+            ):
+                return name
+        raise RuntimeError(f"Could not determine genome build for {self.path}")
 
 
 TRANS_TABLE = str.maketrans("ACGTacgtNn", "TGCAtgcaNn")

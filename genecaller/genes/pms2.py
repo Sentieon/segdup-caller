@@ -77,8 +77,9 @@ class PMS2(Gene):
         self._load_block_manifest()
 
     def _load_block_manifest(self) -> None:
-        """Load pms2_psv_manifest.json and build lookup tables."""
-        manifest_path = get_data_file("data/pms2_psv_manifest.json")
+        """Load the build-specific PSV manifest (config psv_manifest) and build lookup tables."""
+        manifest_cfg = self.config.get("psv_manifest")
+        manifest_path = get_data_file(manifest_cfg) if manifest_cfg else None
         if not manifest_path:
             self.logger.warning("PMS2 block manifest not found")
             return

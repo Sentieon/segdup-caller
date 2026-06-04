@@ -16,6 +16,7 @@ from genecaller.util import (
     get_software_versions,
     merge_gene_vcfs,
     read_bundle_info,
+    Reference,
 )
 from genecaller.bam_process import Bam
 from genecaller.calling.small_var import validate_pop_vcf_coverage
@@ -211,7 +212,7 @@ class GeneCaller:
 
     def print_param(self) -> None:
         logger.info("Input loaded:")
-        logger.info(f" * Reference file: {self.ref}")
+        logger.info(f" * Reference file: {self.ref} (build: {self.build})")
         logger.info(f" * Input short reads BAM: {self.input[0]}")
         logger.info(
             f" * Input long reads BAM: {self.input[1] if self.input[1] else 'None'}"
@@ -237,12 +238,27 @@ class GeneCaller:
         logger.info(f" * Output directory: {self.params['outdir']}")
         logger.info(f" * Sample name: {self.params['sample_name']}")
 
+    @staticmethod
+    def _detect_reference_build(reference: str) -> str:
+        """Identify the reference genome build; exit with guidance if unrecognized."""
+        try:
+            return Reference(reference).build()
+        except RuntimeError as e:
+            logger.error(
+                f"{e}. Supported builds: hg38, hg19, b37. "
+                "Pass --config to supply a custom gene configuration."
+            )
+            sys.exit(1)
+
     def load_params(self) -> None:
-        default_cfg_fname = get_data_file("genes.yaml")
-        if default_cfg_fname is None:
+        # Catalog config (canonical hg38) drives only the --genes help text;
+        # gene names are build-invariant. The config actually used is selected
+        # from the detected reference build after argument parsing.
+        catalog_cfg_fname = get_data_file("data/hg38/genes.yaml")
+        if catalog_cfg_fname is None:
             logger.error("Failed to load genes.yaml file.")
             sys.exit(1)
-        with open(default_cfg_fname) as f:
+        with open(catalog_cfg_fname) as f:
             default_config = yaml.safe_load(f)
             default_genes = [g for g in default_config.keys() if g != "main"]
         parser = argparse.ArgumentParser(
@@ -347,13 +363,26 @@ class GeneCaller:
             raise Exception(
                 "Long read model is not specified. Please download the long read model from Sentieon"
             )
+        if not os.path.exists(args.reference):
+            raise Exception(f"Reference file {args.reference} does not exist.")
         if not os.path.exists(args.reference + ".fai"):
             raise Exception(f"Index file {args.reference}.fai does not exist.")
+        self.build = self._detect_reference_build(args.reference)
+        logger.info(f"Detected reference build: {self.build}")
         if args.config:
             with open(args.config) as f:
                 config = yaml.safe_load(f)
         else:
-            config = default_config
+            cfg_fname = get_data_file(f"data/{self.build}/genes.yaml")
+            if cfg_fname is None or not os.path.exists(cfg_fname):
+                logger.error(
+                    f"No gene configuration is shipped for reference build "
+                    f"'{self.build}' (currently supported: hg38). "
+                    "Use --config to supply a custom configuration."
+                )
+                sys.exit(1)
+            with open(cfg_fname) as f:
+                config = yaml.safe_load(f)
         config["main"]["sr_model"] = args.sr_model + "/dnascope.model"
         if args.lr_model:
             config["main"]["lr_model"] = args.lr_model + "/diploid_model"
@@ -366,11 +395,11 @@ class GeneCaller:
             bundle_paths.append(args.lr_model)
         validate_pop_vcf_coverage(bundle_paths)
 
-        # If no genes specified, use all available genes
+        # If no genes specified, use all genes available in the selected config
         if args.genes:
             genes = [s.strip().upper() for s in args.genes.split(",")]
         else:
-            genes = default_genes
+            genes = [g for g in config if g != "main"]
             logger.info(
                 f"No genes specified, will process all available genes: {', '.join(genes)}"
             )
