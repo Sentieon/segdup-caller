@@ -1,0 +1,286 @@
+CFH:
+  gene_strand: "+"
+  diff_vcf:
+  - data/hg19/CFH.vcf.gz
+  gene_names:
+  - CFH
+  gene_regions:
+  - chr1:196621173-196917933
+  cn_regions:
+   - [CFH, chr1:196711705-196716634]
+   - [CFHR31, chr1:196743970-196801319]
+   - [CFHR142, chr1:196783430-196905430]
+   - [CFHR2, chr1:196905430-196917933]
+  exclusion_regions:
+   - chr1:196716635-196743970
+   - chr1:196801320-196857182
+  liftover_regions:
+  - - CFHA
+    - chr1:196756090-196758763,chr1:196758764-196778652,chr1:196781660-196786136,chr1:196786137-196793910,chr1:196711705-196716634
+  - - CFHB
+    - chr1:196880614-196883303,chr1:196883677-196903557,chr1:196903558-196908029,chr1:196910161-196917933,chr1:196796320-196801319
+  map: data/hg19/CFHA_CFHB.dat
+  config:
+    cn_priors:
+      CFH: {0: 0.0005, 1: 0.0005, 2: 0.998, 3: 0.0005, 4: 0.0005}  # Very conserved
+      CFHR31: {0: 0.19, 1: 0.3, 2: 0.5, 3: 0.005, 4: 0.005}      # Het del most common, hom del next
+      CFHR142: {0: 0.02, 1: 0.08, 2: 0.89, 3: 0.005, 4: 0.005}    # Deletion less common than CFHR31
+      CFHR2: {0: 0.0005, 1: 0.0005, 2: 0.998, 3: 0.0005, 4: 0.0005}    # Very conserved
+SMN1:
+  gene_strand: "+"
+  diff_vcf:
+  - data/hg19/SMN1.vcf.gz
+  - data/hg19/SMN2.vcf.gz
+  gene_names:
+  - SMN1
+  - SMN2
+  gene_regions:
+  - chr5:70211770-70259820
+  - chr5:69336353-69384373
+  longdel:
+  - [SMN1_3.5kdel, chr5:70213527-70217087]
+  - [SMN2_6.3kdel, chr5:69368688-69374999]
+  map: data/hg19/SMN1_SMN2.dat
+  config:
+    longdel_priors:
+      SMN1_3.5kdel: 0.02    # Less common deletion
+      SMN2_6.3kdel: 0.20    # SMN2 deletions also occur
+CYP11B1:
+  gene_strand: "-"
+  diff_vcf:
+  - data/hg19/CYP11B1.vcf.gz
+  - data/hg19/CYP11B2.vcf.gz
+  gene_names:
+  - CYP11B1
+  - CYP11B2
+  gene_regions:
+  - chr8:143954580-143961366
+  - chr8:143992180-143999393
+  map: data/hg19/CYP11B1_CYP11B2.dat
+STRC:
+  gene_strand: "-"
+  diff_vcf:
+  - data/hg19/STRC.vcf.gz
+  - data/hg19/STRCP1.vcf.gz
+  gene_names:
+  - STRC
+  - STRCP1
+  gene_regions:
+  - chr15:43891201-43912198
+  - chr15:43991015-44011664
+  map: data/hg19/STRC_STRCP1.dat
+CYP2D6:
+  gene_strand: "-"
+  diff_vcf:
+  - data/hg19/CYP2D6.vcf.gz
+  - data/hg19/CYP2D7.vcf.gz
+  gene_names:
+  - CYP2D6
+  - CYP2D7
+  gene_regions:
+  - chr22:42519196-42528200
+  - chr22:42531353-42541874
+  liftover_regions:
+  - - CYP2D6
+    - chr22:42519196-42521966,chr22:42521967-42528200
+  - - CYP2D7
+    - chr22:42531353-42534122,chr22:42535687-42541874
+  map: data/hg19/CYP2D6_CYP2D7.dat
+  cnv_exclude_regions: []
+  recombination_regions:
+    - chr22:42522502-42522802  # Exon 9 - for CYP2D6*36 & *4N
+    - chr22:42522802-42524002  # Intron 7 - major recombination hotspot
+    - chr22:42525702-42526902  # Intron 1 - major recombination hotspot
+  conversion_regions:
+  - region: "chr22:42519196-42528200"
+    fusion_detection: true
+    three_prime_terminus: 42522501
+    five_prime_terminus: 42526867
+  config:
+    prior_type: gamma        # Allows asymmetric distribution
+    gamma_shape: 3.0         # Shape parameter (α)
+    gamma_scale: 0.67        # Scale parameter (β), mean = α×β = 2.0
+    transition_rate_background: 1e-8  # Very sticky in stable exonic regions
+    transition_rate_hotspot: 0.001    # Loose in recombination hotspots
+    star_allele_file: data/hg19/cyp2d6_star_alleles.tsv
+    backbone_file: data/hg19/cyp2d6_backbone.tsv
+GBA:
+  gene_strand: "-"
+  diff_vcf:
+  - data/hg19/GBA1.vcf.gz
+  - data/hg19/GBAP1.vcf.gz
+  gene_names:
+  - GBA1
+  - GBAP1
+  gene_regions:
+  - chr1:155200767-155211659
+  - chr1:155180173-155189448
+  map: data/hg19/GBA1_GBAP1.dat
+  liftover_regions:
+  - - GBA1
+    - chr1:155200767-155207401,chr1:155207722-155208739,chr1:155209373-155209956,chr1:155210269-155211659
+  - - GBAP1
+    - chr1:155180173-155186444,chr1:155186445-155187461,chr1:155187462-155188030,chr1:155188031-155189448
+  conversion_regions:
+  - region: "chr1:155202791-155207400"
+    three_prime_terminus: 155204243
+    fusion_detection: true
+  config:
+    cn_priors:
+      GBA1: {0: 0.0005, 1: 0.001, 2: 0.9975, 3: 0.0005, 4: 0.0005}   # Highly conserved
+      GBAP1: {0: 0.05, 1: 0.20, 2: 0.74, 3: 0.005, 4: 0.005}        # Deletion-prone pseudogene
+HBA:
+  gene_strand: "+"
+  tandem: true
+  diff_vcf:
+  - data/hg19/HBA.vcf.gz
+  gene_names:
+  - HBA
+  gene_regions:
+  - chr16:219453-227521
+  liftover_regions:
+   - [HBA2, "chr16:219454-220790,chr16:225795-227520"]
+   - [HBA1, "chr16:223711-225045,chr16:221989-223709"]
+  cn_regions:
+   - [a3.7, chr16:222870-226673]
+   - [a4.2, chr16:219817-224074]
+  ignore_nondup: false
+  config:
+   dp_norm: 1.12
+  map: data/hg19/HBA.dat
+IKBKG:
+  gene_strand: "+"
+  diff_vcf:
+  - data/hg19/IKBKG.vcf.gz
+  - data/hg19/IKBKGP1.vcf.gz
+  gene_names:
+  - IKBKG
+  - IKBKGP1
+  gene_regions:
+  - chrX:153783827-153803263
+  - chrX:153860252-153877130
+  liftover_regions:
+  - - IKBKG
+    - chrX:153783827-153800688
+  - - IKBKGP1
+    - chrX:153860252-153877130
+  cn_regions:
+   - [IKBKG_5prime, chrX:153783827-153786234]
+   - [IKBKGdel, chrX:153786235-153797911]
+   - [IKBKG_3prime, chrX:153797912-153800688]
+   - [IKBKGP1_5prime, chrX:153860252-153863013]
+   - [IKBKGP1del, chrX:153863014-153874690]
+   - [IKBKGP1_3prime, chrX:153874691-153877130]
+  map: data/hg19/IKBKG_IKBKGP1.dat
+  sex_chromosome: "X"
+  requires_sex: true
+  baseline_cn_male: 1
+  baseline_cn_female: 2
+  config:
+    cn_diff_priors:
+      IKBKG_5prime: {-2: 0.0001, -1: 0.001, 0: 0.9978, 1: 0.001, 2: 0.0001}
+      IKBKG_3prime: {-2: 0.0001, -1: 0.001, 0: 0.9978, 1: 0.001, 2: 0.0001}
+      IKBKGP1_5prime: {-2: 0.0001, -1: 0.001, 0: 0.9978, 1: 0.001, 2: 0.0001}
+      IKBKGP1_3prime: {-2: 0.0001, -1: 0.001, 0: 0.9978, 1: 0.001, 2: 0.0001}
+      IKBKGdel: {-2: 0.001, -1: 0.02, 0: 0.965, 1: 0.005, 2: 0.005, 3: 0.004}
+      IKBKGP1del: {-2: 0.005, -1: 0.10, 0: 0.88, 1: 0.005, 2: 0.005, 3: 0.005}
+    mosaic_detection: true
+    dp_norm: 1.15
+    skip_variant_call: true
+    use_virtual_ad: true
+PMS2:
+  gene_strand: "-"
+  diff_vcf:
+  - data/hg19/PMS2.vcf.gz
+  - data/hg19/PMS2CL.vcf.gz
+  gene_names:
+  - PMS2
+  - PMS2CL
+  gene_regions:
+  - chr7:6004631-6033041
+  - chr7:6773194-6799427
+  longdel:
+  - [PMS2_exon13-15.DEL, chr7:6010556-6018831]
+  - [PMS2_exon14.DEL, chr7:6017097-6017264]
+  - [PMS2_exon10.DEL, chr7:6029431-6029586]
+  - [PMS2CL_exon13-14.DEL, chr7:6787631-6789631]
+  map: data/hg19/PMS2_PMS2CL.dat
+  liftover_regions:
+  - - PMS2
+    - chr7:6004631-6028675,chr7:6031284-6032427,chr7:6032428-6033041
+  - - PMS2CL
+    - chr7:6775275-6799427,chr7:6774182-6775178,chr7:6773194-6773866
+  conversion_regions:
+  - region: "chr7:6017339-6028659"
+    fusion_detection: true
+    three_prime_terminus: 6017339
+  recombination_regions:
+    - chr7:6018454-6018860
+  config:
+    prior_type: gaussian
+    cn_prior_std: 0.5
+    psv_manifest: data/hg19/pms2_psv_manifest.json
+    transition_rate_background: 1e-8
+    transition_rate_hotspot: 0.01
+    cnv_conversion_iters: 2
+    convergence_threshold: 0.01
+    longdel_priors:
+      PMS2CL_exon13-14.DEL: 0.25
+      PMS2_exon13-15.DEL: 2.0e-4
+      PMS2_exon14.DEL: 5.0e-5
+      PMS2_exon10.DEL: 2.0e-5
+RCCX:
+  gene_strand: "+"
+  diff_vcf:
+  - data/hg19/RCCX1.vcf.gz
+  - data/hg19/RCCX2.vcf.gz
+  gene_names:
+  - RCCX1
+  - RCCX2
+  gene_regions:
+  - chr6:31981047-32077177
+  - chr6:31947777-31980249
+  liftover_regions:
+  - - RCCX1
+    - chr6:31981047-32013103
+  - - RCCX2
+    - chr6:31948309-31980249
+  cn_regions:
+   - [C4A, chr6:31949768-31972654]
+   - [CYP21A1P, chr6:31973466-31976176]
+   - [TNXA, chr6:31976391-31980249]
+   - [C4B, chr6:31982507-32003750]
+   - [CYP21A2, chr6:32006042-32008930]
+   - [TNXB, chr6:32008930-32077177]
+  longdel:
+   - [C4A_HERV-K, chr6:31952472-31958829]
+   - [C4B_HERV-K, chr6:31985210-31991567]
+  cnv_exclude_regions:
+  - chr6:32005977-32006377
+  - chr6:32006877-32007177
+  - chr6:32007877-32008377
+  - chr6:32008877-32013103
+  - chr6:31973242-31973643
+  - chr6:31974149-31974441
+  - chr6:31975141-31975642
+  - chr6:31976142-31980249
+  conversion_regions:
+  - region: "chr6:32008930-32013103"
+    fusion_detection: false
+  - region: "chr6:32005777-32008930"
+    fusion_detection: false
+  recombination_regions:
+  - [chr6:32005977-32006377, 5e-4]
+  - [chr6:32006877-32007177, 1e-3]
+  - [chr6:32007877-32008377, 5e-4]
+  - [chr6:32008877-32008977, 2e-3]
+  - [chr6:32008977-32013103, 1e-4]
+  map: data/hg19/RCCX1_RCCX2.dat
+  config:
+   dp_norm: 1.1
+   max_move_size: 3
+main:
+  cnv_model: data/SentieonGeneCaller0.1.bundle/cnv.model
+  min_map_qual: 45
+  cn_prior_std: 2
+  conversion_db: data/hg19/known_gene_conversions.tsv

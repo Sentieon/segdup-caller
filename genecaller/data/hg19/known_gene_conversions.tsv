@@ -1,0 +1,24 @@
+##file_format=KnownGeneConversionDB_v1.1
+##reference_genome=GRCh37/hg19
+##description=A database of known gene conversion events (complex alleles) and their signature variants.
+##column_definitions=<ID=event_name,Description="Common name or ID for the conversion event (e.g., RecNciI, GBA-J1)">
+##column_definitions=<ID=recipient_gene,Description="Gene symbol of the recipient locus (e.g., GBA)">
+##column_definitions=<ID=recipient_locus,Description="Genomic region (chr:start-end) containing all signature variants">
+##column_definitions=<ID=donor_gene,Description="Gene symbol of the donor locus (e.g., GBAP1)">
+##column_definitions=<ID=donor_locus,Description="Genomic region (chr:start-end) of the corresponding donor sequence">
+##column_definitions=<ID=signature_variants,Description="Pipe-separated list of signature variant IDs (Signal.id field values), or NA if position-based only">
+##column_definitions=<ID=event_type,Description="Event type: CONVERSION or FUSION">
+##column_definitions=<ID=min_match_threshold,Description="Minimum match fraction 0.0-1.0 for variant matching">
+##column_definitions=<ID=ref,Description="Reference allele (NA for complex events with multiple variants)">
+##column_definitions=<ID=alt,Description="Alternate allele (NA for complex events with multiple variants)">
+#event_name	recipient_gene	recipient_locus	donor_gene	donor_locus	signature_variants	event_type	min_match_threshold	ref	alt
+GBA1::GBAP1_Fusion	GBA1	chr1:155203791-155207791	GBAP1	chr1:155183164-155186514	NA	FUSION	0.6	NA	NA
+RecTL	GBA1	chr1:155204994-155205597	GBAP1	chr1:155186682-155186776	c.1263del|D409H|L483P|A495P|V499V	CONVERSION	0.8	NA	NA
+RecNciI	GBA1	chr1:155204994-155205043	GBAP1	chr1:155184367-155184416	L483P|A495P|V499V	CONVERSION	0.8	NA	NA
+L483P	GBA1	chr1:155205043	GBAP1	chr1:155184416	L483P	CONVERSION	0.8	A	G
+A495P	GBA1	chr1:155205008	GBAP1	chr1:155184381	A495P	CONVERSION	0.8	C	G
+V499V	GBA1	chr1:155204994	GBAP1	chr1:155184367	V499V	CONVERSION	0.8	C	G
+c.1263del	GBA1	chr1:155205540-155205596	GBAP1	chr1:155184912-155184913	c.1263del	CONVERSION	0.8	GGGACTGTCGACAAAGTTACGCACCCAATTGGGTCCTCCTTCGGGGTTCAGGGCAA	G
+D409H	GBA1	chr1:155205518	GBAP1	chr1:155184891	D409H	CONVERSION	0.8	C	G
+rs708606	GBA1	chr1:155204694	GBAP1	NA	rs708606	CONVERSION	0.8	C	T
+CYP2D6*36_Exon9	CYP2D6	chr22:42522602-42522662	CYP2D7	chr22:42535311-42535371	rs1135833|E9_Frameshift	CONVERSION	0.5	NA	NA
