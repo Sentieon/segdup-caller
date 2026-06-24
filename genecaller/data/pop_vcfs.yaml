@@ -3,8 +3,15 @@
 # bundle_info.json. Paths are resolved relative to genecaller/data/ via
 # util.get_data_file. Edit-in-place is safe; test/prepare_pop_vcf.py
 # --update-manifest will append new entries or replace existing ones.
+#
+# `pop_vcf` is a per-build mapping (hg38/hg19/b37): selection is keyed by the
+# reference build auto-detected at runtime. hg19 and b37 share GRCh37
+# coordinates but differ in contig naming, so they need separate files.
+# Legacy flat form (`pop_vcf: <path>` + `assembly: hg38`) is still accepted.
 
 "population-hprc-v2.0+gnomad-v4.1.0-20251216":
-  pop_vcf: pop_vcfs/segdup_pop-population-hprc-v2.0_gnomad-v4.1.0-20251216.vcf.gz
-  assembly: hg38
-  description: "Population VCF HPRC 2.0"
+  pop_vcf:
+    hg38: pop_vcfs/segdup_pop-population-hprc-v2.0_gnomad-v4.1.0-20251216.vcf.gz
+    hg19: pop_vcfs/segdup_pop-population-hprc-v2.0_gnomad-v4.1.0-20251216.hg19.vcf.gz
+    b37: pop_vcfs/segdup_pop-population-hprc-v2.0_gnomad-v4.1.0-20251216.b37.vcf.gz
+  description: "Population VCF HPRC 2.0 (hg38 native; hg19/b37 via CrossMap liftover + chr-strip)"

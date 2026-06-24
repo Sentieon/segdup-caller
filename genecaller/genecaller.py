@@ -393,7 +393,7 @@ class GeneCaller:
         bundle_paths = [args.sr_model]
         if args.lr_model:
             bundle_paths.append(args.lr_model)
-        validate_pop_vcf_coverage(bundle_paths)
+        validate_pop_vcf_coverage(bundle_paths, self.build)
 
         # If no genes specified, use all genes available in the selected config
         if args.genes:

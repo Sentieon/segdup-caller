@@ -7,8 +7,9 @@ When DNAscope is invoked with a population model bundle (one whose
 bundle_info.json declares a SentieonVcfID), a transfer step is run between
 DNAscope and DNAModelApply that annotates the raw VCF with INFO fields from
 the bundled population VCF. The bundled pop VCF is looked up by
-SentieonVcfID via data/pop_vcfs.yaml. Non-population bundles run the
-existing two-step pipeline unchanged.
+SentieonVcfID via data/pop_vcfs.yaml, then by the detected reference build
+(hg38/hg19/b37). Non-population bundles run the existing two-step pipeline
+unchanged.
 """
 
 import os
@@ -22,7 +23,7 @@ import yaml
 
 from .. import throttle
 from ..logging import get_logger
-from ..util import IntervalList, get_data_file, read_bundle_info
+from ..util import IntervalList, Reference, get_data_file, read_bundle_info
 
 logger = get_logger(__name__)
 
@@ -30,9 +31,10 @@ logger = get_logger(__name__)
 # Caches (per process). The ProcessPoolExecutor in genecaller.process_genes
 # means each worker pays the parse cost at most once; threads within a worker
 # share the dict.
-_POP_VCF_CACHE: Dict[str, Optional[str]] = {}   # bundle_dir -> pop_vcf path (None for non-pop)
+_POP_VCF_CACHE: Dict[tuple, Optional[str]] = {}  # (bundle_dir, build) -> pop_vcf path (None for non-pop)
 _MERGE_RULES_CACHE: Dict[str, str] = {}         # pop_vcf path -> "ID:sum,ID:sum,..."
 _MANIFEST_CACHE: Optional[Dict[str, dict]] = None
+_BUILD_CACHE: Dict[str, str] = {}               # reference path -> genome build (hg38/hg19/b37)
 
 
 def subset_input_vcf(
@@ -66,19 +68,45 @@ def _load_pop_vcf_manifest() -> Dict[str, dict]:
     return _MANIFEST_CACHE
 
 
-def _resolve_pop_vcf_for_model(model_path: str) -> Optional[str]:
-    """Return the bundled pop_vcf path for this model bundle, or None.
+def _build_for_ref(ref: str) -> str:
+    """Detect (and cache) the genome build for a reference FASTA."""
+    b = _BUILD_CACHE.get(ref)
+    if b is None:
+        b = Reference(ref).build()
+        _BUILD_CACHE[ref] = b
+    return b
+
+
+def _entry_pop_vcf(entry: dict, build: str) -> Optional[str]:
+    """Relative pop_vcf path for ``build`` from a manifest entry, or None.
+
+    Supports the per-build mapping ``pop_vcf: {hg38: ..., hg19: ...}`` and the
+    legacy flat ``pop_vcf: <path>`` (which applies to its declared ``assembly``,
+    defaulting to hg38). hg19 and b37 share GRCh37 coordinates but differ in
+    contig naming, so they require separate entries.
+    """
+    pv = entry.get("pop_vcf")
+    if isinstance(pv, dict):
+        return pv.get(build)
+    if pv:
+        return pv if entry.get("assembly", "hg38") == build else None
+    return None
+
+
+def _resolve_pop_vcf_for_model(model_path: str, build: str) -> Optional[str]:
+    """Return the bundled pop_vcf path for this model bundle and build, or None.
 
     Non-population bundles (no bundle_info.json or no SentieonVcfID) return
     None and the caller should run the existing flow unchanged.
     """
     bundle_dir = os.path.dirname(model_path)
-    if bundle_dir in _POP_VCF_CACHE:
-        return _POP_VCF_CACHE[bundle_dir]
+    cache_key = (bundle_dir, build)
+    if cache_key in _POP_VCF_CACHE:
+        return _POP_VCF_CACHE[cache_key]
     info = read_bundle_info(bundle_dir)
     vcf_id = info.get("SentieonVcfID")
     if not vcf_id:
-        _POP_VCF_CACHE[bundle_dir] = None
+        _POP_VCF_CACHE[cache_key] = None
         return None
     entry = _load_pop_vcf_manifest().get(vcf_id)
     if entry is None:
@@ -88,22 +116,29 @@ def _resolve_pop_vcf_for_model(model_path: str) -> Optional[str]:
             f"'{vcf_id}' (required by model bundle '{bundle_dir}'). "
             f"Update segdup-caller or check data/pop_vcfs.yaml."
         )
-    path = get_data_file(entry["pop_vcf"])
+    rel = _entry_pop_vcf(entry, build)
+    if rel is None:
+        raise RuntimeError(
+            f"Pop VCF manifest entry for SentieonVcfID '{vcf_id}' has no "
+            f"pop_vcf for reference build '{build}'. Add a '{build}' entry "
+            f"under its 'pop_vcf' in data/pop_vcfs.yaml."
+        )
+    path = get_data_file(rel)
     if not path or not os.path.exists(path):
         raise RuntimeError(
-            f"Pop VCF file '{entry['pop_vcf']}' for SentieonVcfID "
-            f"'{vcf_id}' was not found in the segdup-caller package data."
+            f"Pop VCF file '{rel}' for SentieonVcfID '{vcf_id}' (build "
+            f"'{build}') was not found in the segdup-caller package data."
         )
     logger.info(
-        f"Population model detected (SentieonVcfID={vcf_id}); "
+        f"Population model detected (SentieonVcfID={vcf_id}, build={build}); "
         f"transfer step will use {path}"
     )
-    _POP_VCF_CACHE[bundle_dir] = path
+    _POP_VCF_CACHE[cache_key] = path
     return path
 
 
-def validate_pop_vcf_coverage(bundle_paths: List[str]) -> None:
-    """Confirm every population-flavor bundle has a manifest entry + file.
+def validate_pop_vcf_coverage(bundle_paths: List[str], build: str) -> None:
+    """Confirm every population-flavor bundle has a manifest entry + file for ``build``.
 
     Bundles without bundle_info.json or without SentieonVcfID are
     non-population models and skipped. On any failure, exit(2) with a clear
@@ -123,11 +158,19 @@ def validate_pop_vcf_coverage(bundle_paths: List[str]) -> None:
                 f"segdup-caller. Please update segdup-caller."
             )
             sys.exit(2)
-        path = get_data_file(entry["pop_vcf"])
+        rel = _entry_pop_vcf(entry, build)
+        if rel is None:
+            logger.error(
+                f"Model bundle '{bundle}' requires population VCF '{vcf_id}' "
+                f"for reference build '{build}', but its manifest entry has no "
+                f"'{build}' pop_vcf. Add one under 'pop_vcf' in data/pop_vcfs.yaml."
+            )
+            sys.exit(2)
+        path = get_data_file(rel)
         if not path or not os.path.exists(path):
             logger.error(
-                f"Manifest entry for '{vcf_id}' points at "
-                f"'{entry['pop_vcf']}' which is missing from the "
+                f"Manifest entry for '{vcf_id}' (build '{build}') points at "
+                f"'{rel}' which is missing from the "
                 f"segdup-caller package data."
             )
             sys.exit(2)
@@ -290,7 +333,7 @@ def call_dnascope(bam: Any, output: str, param: Dict[str, Any]) -> None:
     if result.returncode:
         raise Exception(result.stderr)
     if apply_model:
-        pop_vcf = _resolve_pop_vcf_for_model(apply_model)
+        pop_vcf = _resolve_pop_vcf_for_model(apply_model, _build_for_ref(bam.ref))
         apply_input = tmp_output
         if pop_vcf:
             transfer_output = output.replace(".vcf", ".transfer.vcf")
