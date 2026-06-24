@@ -77,7 +77,8 @@ You can find a list of Sentieon models in our [Sentieon models repository](https
 usage: segdup-caller [-h] --short SHORT [--long LONG] --sr_model SR_MODEL
                      [--lr_model LR_MODEL] --reference REFERENCE [--genes GENES]
                      [--sample_name SAMPLE_NAME] [--sr_prefix SR_PREFIX]
-                     [--lr_prefix LR_PREFIX] [--config CONFIG] --outdir OUTDIR
+                     [--lr_prefix LR_PREFIX] [--config CONFIG]
+                     [--set KEY.PATH=VALUE] --outdir OUTDIR
                      [--version] [--keep_temp] [--threads THREADS]
                      [--workers WORKERS] [--sex {male,female,M,F,XY,XX}]
                      [--merge_vcf]
@@ -114,6 +115,16 @@ Targeted variant caller for genes with highly similar paralogs.
   --lr_prefix LR_PREFIX     Long read result prefix (default: lr)
 
   --config CONFIG           Custom gene configuration file (advanced users only)
+
+  --set KEY.PATH=VALUE      Override a single scalar config parameter on top of
+                            the base config (shipped default or --config file).
+                            May be repeated. Dotted path into the config; scalar
+                            value only (no lists/maps). Dashes in keys are treated
+                            as underscores. Examples:
+                              --set main.min_map_qual=30
+                              --set main.cn_prior_std=2.5
+                            Useful for platform tuning, e.g. lowering
+                            main.min_map_qual to 30 for single-end Ultima reads.
 
   --outdir OUTDIR, -o OUTDIR
                             Output directory (required)

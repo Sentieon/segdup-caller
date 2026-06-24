@@ -41,6 +41,63 @@ CALLING_MIN_VERSIONS = {
 }
 
 
+def _apply_config_override(config: Dict[str, Any], spec: str) -> str:
+    """Apply a single ``dotted.key.path=value`` override to ``config`` in place.
+
+    The value is parsed as a scalar: YAML scalar rules first (so ``30`` -> int,
+    ``2.5`` -> float, ``true`` -> bool, ``null`` -> None, otherwise str), then a
+    numeric-coercion fallback so scientific notation like ``1e-3`` becomes a
+    float. Lists / maps are rejected (scalars only — no complex types). Dashes in
+    key components are treated as underscores, so ``main.min-map-qual=30`` targets
+    ``main.min_map_qual``.
+
+    The parent section of the target must already exist (catches mistyped
+    sections), but the leaf key may be new (many params are optional-with-default).
+    Replacing an existing complex value (list/map) with a scalar is refused.
+
+    Returns a short description for logging. Raises ``ValueError`` (user-facing
+    message) on any problem.
+    """
+    if "=" not in spec:
+        raise ValueError(f"'{spec}': expected KEY.PATH=VALUE")
+    key_path, _, raw = spec.partition("=")
+    keys = [k.replace("-", "_") for k in key_path.strip().split(".")]
+    if not key_path.strip() or any(not k for k in keys):
+        raise ValueError(f"'{spec}': empty key path")
+
+    value: Any = yaml.safe_load(raw)
+    if isinstance(value, str):
+        # YAML leaves e.g. "1e-3" as a string; coerce obvious numbers.
+        for conv in (int, float):
+            try:
+                value = conv(value)
+                break
+            except ValueError:
+                pass
+    if isinstance(value, (list, dict)):
+        raise ValueError(
+            f"'{spec}': only scalar values are allowed (got {type(value).__name__})"
+        )
+
+    node: Any = config
+    traversed: list = []
+    for k in keys[:-1]:
+        nxt = node.get(k) if isinstance(node, dict) else None
+        if not isinstance(nxt, dict):
+            raise ValueError(f"'{spec}': no config section '{'.'.join(traversed + [k])}'")
+        node = nxt
+        traversed.append(k)
+    last = keys[-1]
+    if isinstance(node.get(last), (list, dict)):
+        raise ValueError(
+            f"'{spec}': refusing to replace the complex value at "
+            f"'{'.'.join(keys)}' with a scalar"
+        )
+    new_key = last not in node
+    node[last] = value
+    return f"{'.'.join(keys)}={value!r}" + (" (new key)" if new_key else "")
+
+
 def process_single_gene(gene_data: tuple) -> Dict:
     gene, input_files, ref, base_params, gene_index = gene_data
 
@@ -298,6 +355,16 @@ class GeneCaller:
         parser.add_argument(
             "--config", help="Custom gene configuration file (advanced users only)"
         )
+        parser.add_argument(
+            "--set",
+            action="append",
+            dest="overrides",
+            metavar="KEY.PATH=VALUE",
+            help="Override a single scalar config parameter on top of the base "
+            "config (the shipped default or --config file). May be repeated; "
+            "dotted path into the config, scalar value only (no lists/maps). "
+            "e.g. --set main.min_map_qual=30 --set main.cn_prior_std=2.5",
+        )
         parser.add_argument("--outdir", "-o", required=True, help="Output directory")
         parser.add_argument(
             "--version", action="version", version=f"segdup-caller {__version__}"
@@ -370,6 +437,9 @@ class GeneCaller:
         self.build = self._detect_reference_build(args.reference)
         logger.info(f"Detected reference build: {self.build}")
         if args.config:
+            if not os.path.exists(args.config):
+                logger.error(f"--config file does not exist: {args.config}")
+                sys.exit(2)
             with open(args.config) as f:
                 config = yaml.safe_load(f)
         else:
@@ -383,6 +453,14 @@ class GeneCaller:
                 sys.exit(1)
             with open(cfg_fname) as f:
                 config = yaml.safe_load(f)
+        # Apply any --set KEY.PATH=VALUE scalar overrides on top of the base config.
+        for spec in args.overrides or []:
+            try:
+                applied = _apply_config_override(config, spec)
+            except ValueError as e:
+                logger.error(f"Invalid --set override {e}")
+                sys.exit(2)
+            logger.info(f"Config override applied: {applied}")
         config["main"]["sr_model"] = args.sr_model + "/dnascope.model"
         if args.lr_model:
             config["main"]["lr_model"] = args.lr_model + "/diploid_model"
@@ -688,6 +766,8 @@ class GeneCaller:
             config_section["job_options"]["lr_model"] = self.args.lr_model
         if self.args.config:
             config_section["job_options"]["config"] = self.args.config
+        if self.args.overrides:
+            config_section["job_options"]["set"] = self.args.overrides
 
         if self.params.get("merge_vcf"):
             merged_path = (
