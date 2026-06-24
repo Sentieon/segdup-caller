@@ -10,9 +10,30 @@ import vcflib
 class StarAlleleCaller:
     """Call CYP2D6 star alleles using phasing-aware consumption method."""
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], ref: Any = None):
+        # `ref` is the genome Reference (build-specific). It lets star calling be
+        # reference-aware: on GRCh37/hg19 the CYP2D6 reference already encodes the
+        # *2 backbone (rs16947/rs1135840), so those markers appear as REFERENCE
+        # (no variant call) and must be reconstructed. On GRCh38 no marker is
+        # reference-encoded, so this is a no-op and behavior is unchanged.
+        self.ref = ref
         self.allele_defs = self._load_allele_definitions(config)
         self.backbone_vars = self._load_backbone_variants(config)
+
+    @staticmethod
+    def _canon_chrom(chrom: str) -> str:
+        """Canonical contig form for variant keys: strip a leading 'chr'.
+        Makes hg38 (chr22), hg19 (chr22) and b37 (22) tables all key-compatible
+        with variants extracted from the result VCF."""
+        return chrom[3:] if chrom.startswith("chr") else chrom
+
+    @classmethod
+    def _canon_av(cls, av: str) -> str:
+        """Canonicalize a 'chrom:pos:ref:alt' associated-variant string."""
+        parts = av.split(":")
+        if parts:
+            parts[0] = cls._canon_chrom(parts[0])
+        return ":".join(parts)
 
     def _load_allele_definitions(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
         definitions = []
@@ -36,7 +57,7 @@ class StarAlleleCaller:
                 allele_data["backbone"] = bool(int(allele_data["backbone"]))
                 assoc = allele_data.get("associated_variants", "")
                 allele_data["associated_variants"] = (
-                    [v.strip() for v in assoc.split(";") if v.strip()]
+                    [self._canon_av(v.strip()) for v in assoc.split(";") if v.strip()]
                     if assoc
                     else []
                 )
@@ -77,6 +98,11 @@ class StarAlleleCaller:
         variant_counts = {}
         for k, v in variants.items():
             variant_counts[k] = v.get("count", 1)
+
+        # Reference-aware reconstruction of markers the build reference encodes
+        # (e.g. the *2 backbone on GRCh37). No-op when no marker is ref-encoded
+        # (always the case on GRCh38), so hg38 calling is unchanged.
+        self._apply_reference_encoding(variants, variant_counts, copy_number)
 
         called_alleles = []
         max_alleles = copy_number if copy_number > 0 else 2
@@ -194,9 +220,7 @@ class StarAlleleCaller:
                     count = gt_indices.count(alt_index)
 
                     if count > 0:
-                        chrom = v.chrom
-                        if not chrom.startswith("chr"):
-                            chrom = f"chr{chrom}"
+                        chrom = self._canon_chrom(v.chrom)
 
                         key = f"{chrom}:{v.pos + 1}:{v.ref}:{alt}"
 
@@ -229,7 +253,99 @@ class StarAlleleCaller:
         return variants
 
     def _make_variant_key(self, var_def: Dict) -> str:
-        return f"{var_def['chrom']}:{var_def['pos']}:{var_def['ref']}:{var_def['alt']}"
+        return f"{self._canon_chrom(var_def['chrom'])}:{var_def['pos']}:{var_def['ref']}:{var_def['alt']}"
+
+    def _ref_base(self, chrom: str, pos: int):
+        """Single reference base (1-based pos) on the build genome, or None.
+        Tries the contig with and without a 'chr' prefix to match either naming."""
+        if self.ref is None:
+            return None
+        for c in (chrom, f"chr{self._canon_chrom(chrom)}", self._canon_chrom(chrom)):
+            try:
+                b = self.ref.get(c, pos - 1, pos)
+                if b:
+                    return b.upper()
+            except Exception:
+                continue
+        return None
+
+    def _iter_marker_defs(self):
+        """Yield (chrom, pos, ref, alt) for every SNV marker the consumption
+        looks up: each allele's defining variant, the backbone variants, and all
+        associated variants. Indels are skipped (single-base ref comparison is
+        only valid for SNVs; the known reference-encoded markers are all SNVs)."""
+        seen = set()
+
+        def emit(chrom, pos, ref, alt):
+            if (
+                ref and alt and len(ref) == 1 and len(alt) == 1
+                and ref in "ACGT" and alt in "ACGT"
+            ):
+                key = (self._canon_chrom(chrom), int(pos), ref, alt)
+                if key not in seen:
+                    seen.add(key)
+                    yield key
+
+        for d in self.allele_defs:
+            if isinstance(d.get("pos"), int) and str(d.get("chrom", "")).startswith(("chr", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "X", "Y")):
+                yield from emit(d["chrom"], d["pos"], d.get("ref", ""), d.get("alt", ""))
+        for bv in self.backbone_vars:
+            yield from emit(bv["chrom"], bv["pos"], bv.get("ref", ""), bv.get("alt", ""))
+        for d in self.allele_defs:
+            for av in d.get("associated_variants", []):
+                p = av.split(":")
+                if len(p) == 4:
+                    try:
+                        yield from emit(p[0], int(p[1]), p[2], p[3])
+                    except ValueError:
+                        continue
+
+    def _apply_reference_encoding(self, variants, variant_counts, copy_number):
+        """For each SNV marker whose build reference base equals the marker's ALT
+        allele, the marker is reference-encoded: it is present on every haplotype
+        that does NOT carry a back-mutation (ALT->REF) call. Reconstruct its
+        presence so the variant-presence consumption logic still works.
+
+        On GRCh38 no marker is reference-encoded, so nothing changes."""
+        if self.ref is None:
+            return
+        cn = copy_number if copy_number and copy_number > 0 else 2
+        for chrom, pos, ref, alt in self._iter_marker_defs():
+            rb = self._ref_base(chrom, pos)
+            if rb is None or rb != alt:
+                continue  # normal (ref==ref) or third-allele -> leave as-is
+            marker_key = f"{chrom}:{pos}:{ref}:{alt}"
+            back_key = f"{chrom}:{pos}:{alt}:{ref}"  # ALT->REF back-mutation call
+            back_var = variants.get(back_key)
+            back_count = variant_counts.get(back_key, 0)
+            marker_count = max(0, cn - back_count)
+            if marker_count == 0:
+                continue
+            variant_counts[marker_key] = max(
+                variant_counts.get(marker_key, 0), marker_count
+            )
+            # Best-effort phasing: marker sits opposite the back-mutation.
+            if marker_count >= cn:
+                hap = "both"
+            elif back_var and back_var.get("haplotype") in (0, 1):
+                hap = 1 - back_var["haplotype"]
+            else:
+                hap = None
+            variants.setdefault(
+                marker_key,
+                {
+                    "gt": "1/1" if marker_count >= 2 else "0/1",
+                    "count": marker_count,
+                    "ps": back_var.get("ps") if back_var else None,
+                    "phased": back_var.get("phased", False) if back_var else False,
+                    "haplotype": hap,
+                    "chrom": chrom,
+                    "pos": pos,
+                    "ref": ref,
+                    "alt": alt,
+                    "reference_encoded": True,
+                },
+            )
 
     def _check_cis_phasing(
         self, variants: Dict, defining_key: str, backbone_keys: List[str]
@@ -342,7 +458,7 @@ class CYP2D6(Gene):
         else:
             interpretation_lines.append("No structural variants detected")
 
-        star_caller = StarAlleleCaller(self.config)
+        star_caller = StarAlleleCaller(self.config, ref=self.ref)
         vcf_path = result_data["Variants"]
         for conv in result_data["gene_conversions"]:
             star_allele = conv.get("star_allele", "")
