@@ -44,6 +44,10 @@ Segdup caller currently supports the following genes and segmental duplication r
 
 > **Note:** Segdup caller is expanding the list of supported genes. If there are particular genes you hope to support, or you encounter any issues, please [file an issue](https://github.com/Sentieon/segdup-caller/issues).
 
+### Supported Reference Builds
+
+Segdup caller currently supports the **GRCh38** (hg38) and **GRCh37** (hg19 and b37) reference assemblies. The reference build is detected automatically from the input — no flag is required. All genes listed above are available on every build except **NCF1**, which is currently supported on GRCh38 (hg38) only.
+
 ---
 
 # Installation
