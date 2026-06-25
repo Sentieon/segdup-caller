@@ -15,3 +15,10 @@
     hg19: pop_vcfs/segdup_pop-population-hprc-v2.0_gnomad-v4.1.0-20251216.hg19.vcf.gz
     b37: pop_vcfs/segdup_pop-population-hprc-v2.0_gnomad-v4.1.0-20251216.b37.vcf.gz
   description: "Population VCF HPRC 2.0 (hg38 native; hg19/b37 via CrossMap liftover + chr-strip)"
+
+"population-hprc-v2.0-20260528":
+  pop_vcf:
+    hg38: pop_vcfs/segdup_pop-population-hprc-v2.0-20260528.vcf.gz
+    hg19: pop_vcfs/segdup_pop-population-hprc-v2.0-20260528.hg19.vcf.gz
+    b37: pop_vcfs/segdup_pop-population-hprc-v2.0-20260528.b37.vcf.gz
+  description: "HPRC_v2.0-only population vcf (hg38 native; hg19/b37 via CrossMap liftover + chr-strip)"
