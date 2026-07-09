@@ -1102,6 +1102,15 @@ class Phased_vcf:
                     f"variant assignment: {', '.join(regions)}"
                 )
 
+    def _pass_or_kept(self, v: Any) -> bool:
+        """A variant is usable if it PASSed, or if it is a configured
+        keep_rejected_positions site (an ML-rejected call preserved for a gene's
+        star caller to re-activate, e.g. CYP2B6 c.785 LD-rescue)."""
+        if not v.filter or "." in v.filter or "PASS" in v.filter:
+            return True
+        keep = getattr(self.gene, "keep_rejected_positions", None) or set()
+        return (v.chrom, v.pos) in keep
+
     @staticmethod
     def _annotate(v: Any, dp: Optional[int] = None) -> None:
         gt = [int(g) for g in re.split(r"\||/", v.samples[0]["GT"])]
@@ -1446,7 +1455,7 @@ class Phased_vcf:
             for v in vcf
             if liftover_region
             and (v.chrom, v.pos) in liftover_region
-            and (not v.filter or "." in v.filter or "PASS" in v.filter)
+            and self._pass_or_kept(v)
         ]
         all_v1s = []
         all_v2s = []
@@ -1457,7 +1466,7 @@ class Phased_vcf:
                 if (
                     orig_region
                     and (v1.chrom, v1.pos) in orig_region
-                    and (not v1.filter or "." in v1.filter or "PASS" in v1.filter)
+                    and self._pass_or_kept(v1)
                 ):
                     heapq.heappush(all_v1s, (v1.pos, i, v1))
                     i += 1
@@ -1469,7 +1478,7 @@ class Phased_vcf:
                 for v2 in vcf2
                 if orig_region2
                 and (v2.chrom, v2.pos) in orig_region2
-                and (not v2.filter or "." in v2.filter or "PASS" in v2.filter)
+                and self._pass_or_kept(v2)
             ]
             to_gene1 = gene_id == 0
             for v2 in self.gene.mapping.convert_vars(

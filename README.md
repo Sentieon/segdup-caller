@@ -22,7 +22,7 @@ Segdup caller supports additional long-read data from **PacBio HiFi** or **Oxfor
 - **Accurate Variant Calling in Complex Regions**: Specialized algorithms for genes with highly similar paralogs and pseudogenes
 - **Haplotype Phasing**: Accurate phasing and assignment of variants to specific gene copies
 - **Gene conversion detection**: Detects gene conversion and fusion detection for select genes
-- **Star allele calling**: Call star alleles for CYP2D6
+- **Star allele calling**: Call star alleles for CYP2D6 and CYP2B6
 
 ### Supported Genes
 
@@ -33,6 +33,7 @@ Segdup caller currently supports the following genes and segmental duplication r
 | SMN1        | SMN1, SMN2                           | CN, variants |
 | PMS2        | PMS2, PMS2CL                         | CN, variants, gene conversion |
 | CYP2D6      | CYP2D6, CYP2D7                       | CN, variants, gene conversion, star alleles |
+| CYP2B6      | CYP2B6, CYP2B7P                      | CN, variants, gene conversion, star alleles |
 | GBA         | GBA1, GBAP1                          | CN, variants, gene conversion |
 | STRC        | STRC, STRCP1                         | CN, variants |
 | NCF1        | NCF1, NCF1B                          | CN, variants |
@@ -41,6 +42,8 @@ Segdup caller currently supports the following genes and segmental duplication r
 | HBA         | HBA1, HBA2                           | CN, variants |
 | RCCX        | RCCX1 (CYP21A2), RCCX2 (CYP21A1P)   | CN, variants, gene conversion |
 | IKBKG       | IKBKG (NEMO), IKBKGP1               | CN, gene conversion (5' region only) |
+| RH          | RHD, RHCE                            | CN (RhD zygosity), variants, gene conversion |
+| SBDS        | SBDS, SBDSP1                        | CN, variants, gene conversion (SDS carrier/affected) |
 
 > **Note:** Segdup caller is expanding the list of supported genes. If there are particular genes you hope to support, or you encounter any issues, please [file an issue](https://github.com/Sentieon/segdup-caller/issues).
 
@@ -108,8 +111,8 @@ Targeted variant caller for genes with highly similar paralogs.
 
   --genes GENES, -g GENES   List of genes to be called (comma separated).
                             If not specified, all supported genes will be called.
-                            Supported genes: CFH, CYP11B1, CYP2D6, GBA, HBA,
-                            IKBKG, NCF1, PMS2, RCCX, SMN1, STRC
+                            Supported genes: CFH, CYP11B1, CYP2B6, CYP2D6, GBA,
+                            HBA, IKBKG, NCF1, PMS2, RCCX, RH, SBDS, SMN1, STRC
 
   --sample_name SAMPLE_NAME Sample name (default: SM tag in the input short-read
                             BAM file will be used)

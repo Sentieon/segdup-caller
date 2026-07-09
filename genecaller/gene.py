@@ -377,6 +377,14 @@ class Gene:
         self.gene_regions = cfg["gene_regions"]
         self.conversion_regions = cfg.get("conversion_regions", [])
         self.recombination_regions = cfg.get("recombination_regions", None)
+        # Positions ("chrom:pos", 1-based) whose ML-rejected calls should be kept
+        # in the result VCF rather than filtered, so a gene's star caller can
+        # re-activate them under its own logic (e.g. CYP2B6 LD-rescue of c.785).
+        # Stored as (chrom, 0-based pos) to match vcflib v.pos in resolve_phased.
+        self.keep_rejected_positions = set()
+        for spec in self.config.get("keep_rejected_positions", []) or []:
+            chrom, pos = str(spec).rsplit(":", 1)
+            self.keep_rejected_positions.add((chrom, int(pos) - 1))
         # CNV exclusion regions: regions where diff sites should be excluded from
         # CNV allele balance modeling (e.g., gene conversion hotspots)
         # Defaults to recombination_regions if not explicitly set
@@ -1548,6 +1556,15 @@ class Gene:
                         r.phased_vcf.setdefault(seq_key, {})["liftover"] = vcf_dict["liftover"]
                 break
 
+    def _keep_var(self, v) -> bool:
+        """Whether a called variant survives the ML-reject filter into the result
+        VCF. ML-rejected calls are normally dropped, except at configured
+        keep_rejected_positions, where they are preserved (still FILTER-tagged) so
+        a gene's star caller can re-activate them under its own logic."""
+        if "MLrejected" not in v.filter:
+            return True
+        return (v.chrom, v.pos) in self.keep_rejected_positions
+
     def resolve_phased(self, params: Dict[str, Any]) -> None:
         # Now all regions are CN-distinct with full info about its CN and its matching segdup
         self._propagate_liftover_phased_vcf()
@@ -1574,7 +1591,7 @@ class Gene:
                                 v
                                 for v in orig_vcf
                                 if (v.chrom, v.pos) in region_itv
-                                and "MLrejected" not in v.filter
+                                and self._keep_var(v)
                             ]
                             orig_vcf.close()
                         else:
@@ -1611,7 +1628,7 @@ class Gene:
                             v
                             for v in lift_vcf
                             if (v.chrom, v.pos) in region_itv
-                            and "MLrejected" not in v.filter
+                            and self._keep_var(v)
                         ]
                         lift_vcf.close()
                     else:
@@ -1623,7 +1640,7 @@ class Gene:
                             v
                             for v in orig_vcf
                             if (v.chrom, v.pos) in region_itv
-                            and "MLrejected" not in v.filter
+                            and self._keep_var(v)
                         ]
                         orig_vcf.close()
                     else:

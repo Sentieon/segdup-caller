@@ -279,6 +279,95 @@ RCCX:
   config:
    dp_norm: 1.1
    max_move_size: 3
+CYP2B6:
+  gene_strand: "+"
+  diff_vcf:
+  - data/b37/CYP2B6.vcf.gz
+  - data/b37/CYP2B7P.vcf.gz
+  gene_names:
+  - CYP2B6
+  - CYP2B7P
+  gene_regions:
+  - 19:41496833-41524605
+  - 19:41429807-41456866
+  liftover_regions:
+  - - CYP2B6
+    - 19:41496833-41504305,19:41505505-41509417,19:41509418-41520254,19:41520255-41524605
+  - - CYP2B7P
+    - 19:41429807-41437275,19:41437276-41441185,19:41441511-41452300,19:41452616-41456866
+  map: data/b37/CYP2B6_CYP2B7P.dat
+  recombination_regions:
+  - 19:41512905-41515305
+  conversion_regions:
+  - region: "19:41497187-41524303"
+    fusion_detection: true
+    five_prime_terminus: 41497187
+    three_prime_terminus: 41524303
+  config:
+    prior_type: gaussian
+    cn_prior_std: 0.5
+    transition_rate_background: "1e-8"
+    transition_rate_hotspot: 0.001
+    star_allele_file: data/b37/cyp2b6_star_alleles.tsv
+    backbone_file: data/b37/cyp2b6_backbone.tsv
+    keep_rejected_positions:
+    - 19:41515263
+RH:
+  gene_strand: "+"                 # RHD (gene1) is on the + strand; RHCE is inverted (−)
+  diff_vcf:
+  - data/b37/RHD.vcf.gz
+  - data/b37/RHCE.vcf.gz
+  gene_names:
+  - RHD
+  - RHCE
+  gene_regions:                    # GRCh37 (hg38 + ~326491); .dat mapped-block extent
+  - 1:25598390-25655519
+  - 1:25688912-25747924
+  liftover_regions:                # 3 mapped blocks derived from the hs37d5 .dat; the
+                                   # 652/978bp RHD-specific gaps between blocks are
+                                   # nonliftover (called from the original BAM)
+  - - RHD
+    - 1:25598390-25627762,1:25628415-25649057,1:25650036-25655519
+  - - RHCE                         # reverse map: RHCE segments run high->low coord
+    - 1:25717653-25747924,1:25695374-25717000,1:25688912-25694395
+  map: data/b37/RHD_RHCE.dat
+  star_allele_file: data/b37/rh_alleles.tsv   # RhD antigen markers (weak D types 1/2/3, Asian DEL)
+  conversion_regions:
+  - region: "1:25598390-25655519"   # RHD body: RHCE->RHD conversion => RHD-CE-D hybrid / partial-D
+    fusion_detection: false            # inverted pair does not form simple terminal fusions (cf. IKBKG)
+    min_num_signals: 5                 # ~97% identity => suppress short normal RHCE-like tracts (see hg38)
+  config:
+    cn_priors:
+      RHD:  {0: 0.15, 1: 0.35, 2: 0.48, 3: 0.01, 4: 0.01}
+      RHCE: {0: 0.0005, 1: 0.001, 2: 0.9975, 3: 0.0005, 4: 0.0005}   # conserved
+SBDS:
+  gene_strand: "-"                 # SBDS (gene1/functional) is on the − strand; SBDSP1 is inverted (+)
+  diff_vcf:
+  - data/b37/SBDS.vcf.gz
+  - data/b37/SBDSP1.vcf.gz
+  gene_names:
+  - SBDS
+  - SBDSP1
+  gene_regions:                    # GRCh37 = liftOver(hg38: SBDS −535013, SBDSP1 −529421); .dat mapped-block extent
+  - 7:66452858-66460906
+  - 7:72299735-72307780
+  liftover_regions:                # single collinear block each (SBDSP1 reverse map); realign_split on hs37d5
+  - - SBDS
+    - 7:66452858-66460906
+  - - SBDSP1
+    - 7:72299735-72307780
+  map: data/b37/SBDS_SBDSP1.dat
+  conversion_regions:
+  - region: "7:66452858-66460906"   # SBDS body: SBDSP1->SBDS conversion (recurrent exon-2 PSVs = SDS alleles)
+    fusion_detection: false            # internal conversion, not a terminal fusion
+    min_num_signals: 3                 # ~97% identity: require ≥3 PSVs for a tract call. The two
+                                       # recurrent pathogenic PSVs are typed directly in genes/sbds.py regardless.
+  config:
+    cn_priors:
+      # SBDS functional gene highly conserved (large deletions rare); SBDSP1 pseudogene
+      # near-conserved (no common recurrent deletion).
+      SBDS:   {0: 0.0005, 1: 0.001, 2: 0.9975, 3: 0.0005, 4: 0.0005}
+      SBDSP1: {0: 0.01, 1: 0.04, 2: 0.93, 3: 0.01, 4: 0.005}
 main:
   cnv_model: data/SentieonGeneCaller0.1.bundle/cnv.model
   min_map_qual: 45
