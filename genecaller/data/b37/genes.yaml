@@ -65,10 +65,37 @@ STRC:
   gene_names:
   - STRC
   - STRCP1
-  gene_regions:
-  - 15:43891201-43912198
+  gene_regions:                       # STRC broadened 3' (higher coord, - strand) across the
+                                      # intergenic gap to host the unique CATSPER2 CN probe; cf.
+                                      # CYP2B6/OTOA. STRCP1 unchanged. Paralog pair defined by liftover.
+  - 15:43891201-43960316
   - 15:43991015-44011664
+  liftover_regions:                   # the ~99.6%-identical direct-tandem repeat pair (whole gene;
+                                      # only exons 16-29 carry PSVs) — drives per-paralog CN so a
+                                      # pathogenic STRC deletion is told apart from a benign STRCP1 one.
+  - - STRC
+    - 15:43891201-43912198
+  - - STRCP1
+    - 15:43991015-44011664
+  cn_regions:                         # CN variables: the two paralog copies + CATSPER2. CATSPER2
+                                      # (unique, between the repeats) is co-deleted in 77-88% of the
+                                      # recurrent NAHR deletions -> deafness-infertility (OMIM 611102).
+  - [STRC, 15:43891201-43912198]
+  - [STRCP1, 15:43991015-44011664]
+  - [CATSPER2, 15:43920701-43960316]
   map: data/b37/STRC_STRCP1.dat
+  config:
+    dp_norm: 1.08                     # corrects the ~11% paralogous STRC/STRCP1 block depth inflation
+                                      # (cohort median block CN 4.45 vs 4.0); gentler than the segdup
+                                      # neighbours (RCCX/HBA/IKBKG 1.1-1.15) to spare the unique CATSPER2.
+                                      # 248-cohort validated vs assembly truth: fixes 2 benign gain FPs,
+                                      # 0 false deletions introduced, all pathogenic deletions preserved.
+    cn_priors:                        # deletion-friendly: DFNB16 is the 2nd commonest AR hearing loss,
+                                      # the recurrent STRC/STRCP1 deletion is the dominant allele, and
+                                      # 3-copy gains (~1.85%) are benign. CATSPER2 mostly di-allelic.
+      STRC:     {0: 0.002, 1: 0.008, 2: 0.98, 3: 0.006, 4: 0.004}   # functional copy: del = pathogenic
+      STRCP1:   {0: 0.005, 1: 0.02,  2: 0.95, 3: 0.02,  4: 0.005}   # pseudogene: del/gain common, benign
+      CATSPER2: {0: 0.002, 1: 0.01,  2: 0.98, 3: 0.006, 4: 0.002}   # unique co-deletion extent marker
 CYP2D6:
   gene_strand: "-"
   diff_vcf:
