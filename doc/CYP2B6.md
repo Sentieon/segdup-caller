@@ -24,9 +24,12 @@ The CYP2B6 module performs:
   its variants are present.
 - CPIC efavirenz phenotype — poor / intermediate / normal / rapid / ultrarapid
   metabolizer, with dosing implications.
-- CYP2B7P hybrid detection — the rare `*29` (partial deletion / hybrid) and `*30`
-  (duplication / hybrid) that arise from recombination in the intron 4 / exon 5 region.
-- Copy-number calling — CYP2B6 and CYP2B7P copy number (normally 2 each).
+- Copy-number calling — CYP2B6 and CYP2B7P copy number (normally 2 each), and the
+  copy-number dosage that flags the structural alleles below.
+- Structural allele detection — the rare `*29` (partial deletion) and `*30` (duplication),
+  reciprocal hybrids formed by recombination in the intron 4 / exon 5 region. Because each
+  changes the copy number of only part of the gene, they are read from copy-number dosage;
+  a whole-gene CYP2B6 copy number of 2 does not exclude them.
 - Small-variant calling — paralog-aware variant calls across the locus.
 
 Supported on GRCh38 (hg38), GRCh37 (hg19), and b37; the build is auto-detected from the
@@ -37,8 +40,10 @@ The CYP2B6 module does not:
 
 - Assign rare PharmVar alleles outside the core CPIC-actionable set (e.g. `*17` is not
   resolved from short reads).
-- Guarantee `*29`/`*30` hybrid or whole-gene CYP2B6 CNV detection empirically — these are
-  rare, exercised by construction and unit tests but not validated on carrier data.
+- Guarantee `*29`/`*30` on real carrier data — copy-number detection is validated on
+  constructed positive controls in both directions (deletion and duplication) and is
+  specific across the reference cohort (no false calls), but no natural carrier was
+  available to confirm sensitivity, so a `*29`/`*30` call should be confirmed orthogonally.
 
 ## Gene Cluster Structure (GRCh38)
 
@@ -63,6 +68,13 @@ The reciprocal products are two rare hybrid alleles:
 
 Unlike CYP2D6, CYP2B6 has no clean whole-gene deletion (no `*5`-style allele) and no
 expanded hybrid family (`*13/*36/*68` analogs). Whole-gene copy number is normally CN=2.
+
+Both hybrids delete or duplicate a shared segment between the two paralogs, so they show
+up as a copy-number change over that segment even though each gene body still looks like
+CN=2. The caller reads this dosage directly: a `*29` drops the affected copy number to 1
+(or 0 if homozygous), a `*30` raises it to 3. A flagged allele is reported with the
+affected copy number, the partner star allele, and the resulting metabolizer phenotype
+(a `*29` is decreased-function, contributing toward a poor/intermediate result).
 
 ## Star Allele Calling
 
@@ -253,11 +265,14 @@ before/after comparison, lifting star concordance from ~88% to ~93%).
 
 > Coverage caveat. Every sample in this cohort has CYP2B6 at CN=2 (whole-gene CYP2B6 CNV
 > is very rare), so the ~99% CN figure is essentially a specificity result — the caller
-> does not over-call copy-number changes. CYP2B6 whole-gene deletion/duplication
-> sensitivity and `*29`/`*30` hybrid detection are not empirically validated here because
-> no carriers were present in the cohort; those paths are exercised only by
-> construction/unit tests. The one CN event observed (HG02622's CYP2B7P pseudogene
-> duplication) was missed — see below.
+> does not over-call copy-number changes. `*29`/`*30` sensitivity could not be measured on
+> real data because no carriers were present (consistent with the rarity noted in the
+> hybrid-allele table above). Their copy-number detection is instead validated on constructed
+> positive controls — a simulated `*29` heterozygote and homozygote and a `*30` duplication
+> are each recovered with the correct dosage and star call — and a copy-number scan across
+> the reference cohort raised no false `*29`/`*30` (clean specificity). The one real CN
+> event in the cohort (HG02622's CYP2B7P pseudogene duplication) is a CYP2B7P gain, not a
+> CYP2B6 structural allele, and is still missed — see below.
 
 Reproducible per-case examples. Each sample below is a public HPRC/1000-Genomes ID;
 running the caller on its GRCh38 short-read alignment reproduces the listed call, which
@@ -296,15 +311,19 @@ Long-read input resolves the phase-unresolved and diluted-c.785 cases outright.
 
 - The star-allele database covers the core CPIC-actionable alleles; rare PharmVar alleles
   not in the table receive no designation (e.g. `*17`, see HG02145 above).
-- `*29`/`*30` hybrids and whole-gene CYP2B6 CNV are rare, and their detection depends on
-  the gene-conversion / copy-number module; borderline events are reported but may be
-  uncertain. No hybrid or CYP2B6-CNV carriers were present in the validation cohort, so
-  these paths are not empirically validated on real data (only by construction and unit
-  tests).
+- `*29`/`*30` hybrids are rare and are detected from copy-number dosage, corroborated by
+  the gene-conversion signal when present. Detection is validated on constructed positive
+  controls (both deletion and duplication) and is specific across the reference cohort, but
+  no natural carrier was available, so real-data sensitivity is unconfirmed and a call
+  should be confirmed orthogonally. A `*30` duplication is reported, but its metabolizer
+  impact is left uncertain because its functional consequence is not established.
 - c.785 (rs2279343) at low allele fraction. The `*6`-defining c.785 is diluted by CYP2B7P
   reads and is LD-rescued only when its c.516 partner is a confident call. A c.785 that
-  appears alone (i.e. `*4`) has no anchor, so a heavily diluted lone `*4` can be missed
-  (HG00658, HG01960). Long-read input resolves it directly.
+  appears alone (i.e. `*4`) has no such anchor, so it can be missed when its alt-read
+  fraction is low. In the two observed cases (HG00658, HG01960) the locus is actually
+  paralog-clean — the flanking PSV shows no CYP2B7P leak — and the deficit is
+  reference/mapping bias against the alt allele (VAF ~0.22-0.30), leaving no dilution
+  or cis-phasing signal available to rescue it. Long-read input resolves it directly.
 - CYP2B7P copy-number gains (extra pseudogene copies) are not detected (HG02622); CYP2B6's
   own copy number is called reliably.
 - Compound-heterozygote vs. combination-allele ambiguity: when a combination allele's

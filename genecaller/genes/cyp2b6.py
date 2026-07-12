@@ -53,6 +53,12 @@ _LD_ANCHOR_RSID = {"rs2279343": "rs3745274"}  # rescued rsID -> cis anchor rsID
 _LD_MIN_ALT = 4      # min ALT reads at the rescued position (guards against noise)
 _LD_MIN_FRAC = 0.15  # min ALT fraction (dilution-aware; a het pushed down by ref leak)
 
+# Max total span (bp) for an allele's markers to count as a "tight cluster" eligible
+# for sequence-equivalence rescue (see _rescue_clustered_alleles). In the CYP2B6 table
+# only *17 (4 adjacent exon-1 SNPs within 11 bp) qualifies; every other multi-marker
+# allele spans >2 kb and is matched by exact keys exactly as before.
+_CLUSTER_WINDOW_BP = 30
+
 
 class CYP2B6StarAlleleCaller(StarAlleleCaller):
     """Star-allele caller with require-all-variants (cis) matching for CYP2B6.
@@ -193,8 +199,129 @@ class CYP2B6StarAlleleCaller(StarAlleleCaller):
             haps_by_ps.setdefault(v["ps"], set()).add(hap)
         return all(len(haps) <= 1 for haps in haps_by_ps.values())
 
+    def _ref_seq(self, chrom: str, start: int, end: int) -> Optional[str]:
+        """Reference bases for 1-based inclusive [start, end] on the build genome,
+        or None. Tries the contig with and without a 'chr' prefix (b37 vs hg38/hg19)."""
+        if self.ref is None or end < start:
+            return None
+        for c in (chrom, f"chr{self._canon_chrom(chrom)}", self._canon_chrom(chrom)):
+            try:
+                s = self.ref.get(c, start - 1, end)
+                if s:
+                    return s.upper()
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _apply_edits(
+        seq: str, wstart: int, edits: List[Tuple[int, str, str]]
+    ) -> Optional[str]:
+        """Splice (pos1, ref, alt) edits into a window sequence whose first base is
+        1-based `wstart`. Applied right-to-left so earlier offsets stay valid. Returns
+        None if any edit runs off the window or its REF does not match the sequence
+        there (a representation we cannot interpret -> caller declines to rescue)."""
+        s = seq
+        for pos, ref, alt in sorted(edits, key=lambda e: e[0], reverse=True):
+            off = pos - wstart
+            if off < 0 or off + len(ref) > len(s):
+                return None
+            if s[off:off + len(ref)].upper() != ref.upper():
+                return None
+            s = s[:off] + alt.upper() + s[off + len(ref):]
+        return s
+
+    def _rescue_clustered_alleles(
+        self, variants: Dict[str, Dict], variant_counts: Dict[str, int]
+    ) -> None:
+        """Rescue an allele whose markers are a tight cluster (total span
+        <= _CLUSTER_WINDOW_BP) that the variant caller emitted in an equivalent but
+        non-canonical form -- e.g. CYP2B6*17's three adjacent exon-1 SNPs
+        (40991388/90/91) written as an insertion+deletion (40991387 G>GGC +
+        40991389 CCG>C). Exact pos:ref:alt matching misses those, so reconstruct the
+        sample's alt sequence over the cluster window; if it equals the allele's
+        expected alt sequence, synthesize the canonical marker keys (phased cis with
+        the backbone SNP) so the normal consumption logic can call the allele.
+
+        Span-gated to clustered alleles ONLY (in the CYP2B6 table just *17; every
+        other multi-marker allele spans >2 kb and is left byte-identical), so this
+        can never change a non-clustered call. Fails safe: no reference, a REF
+        mismatch, or a window that does not reconstruct exactly => no injection."""
+        if self.ref is None:
+            return
+        for d in self.allele_defs:
+            if d.get("chrom") == "STRUCTURAL":
+                continue
+            required = self._required_keys(d)
+            if len(required) < 2:
+                continue
+            if all(variant_counts.get(k, 0) > 0 for k in required):
+                continue  # already matchable by exact keys; never disturb it
+            markers: List[Tuple[int, str, str]] = []
+            for k in required:
+                p = k.split(":")
+                if len(p) != 4:
+                    markers = []
+                    break
+                try:
+                    markers.append((int(p[1]), p[2], p[3]))
+                except ValueError:
+                    markers = []
+                    break
+            if not markers:
+                continue
+            m_start = min(pos for pos, _, _ in markers)
+            m_end = max(pos + len(ref) - 1 for pos, ref, _ in markers)
+            if m_end - m_start + 1 > _CLUSTER_WINDOW_BP:
+                continue  # not a tight cluster -> not this representation problem
+            canon = self._canon_chrom(d["chrom"])
+            win_vars = [
+                v for v in variants.values()
+                if self._canon_chrom(v["chrom"]) == canon
+                and v["pos"] + len(v["ref"]) - 1 >= m_start - 1
+                and v["pos"] <= m_end + 1
+            ]
+            if not win_vars:
+                continue
+            wstart = min([m_start] + [v["pos"] for v in win_vars])
+            wend = max([m_end] + [v["pos"] + len(v["ref"]) - 1 for v in win_vars])
+            ref_seq = self._ref_seq(d["chrom"], wstart, wend)
+            if not ref_seq or len(ref_seq) != wend - wstart + 1:
+                continue
+            expected = self._apply_edits(ref_seq, wstart, markers)
+            observed = self._apply_edits(
+                ref_seq, wstart, [(v["pos"], v["ref"], v["alt"]) for v in win_vars]
+            )
+            if expected is None or observed is None or expected != observed:
+                continue
+            # Matched: take phase from the backbone (defining) SNP so the injected
+            # markers are cis with it and the diplotype/phasing logic is satisfied.
+            bb = variants.get(self._make_variant_key(d))
+            hap = bb.get("haplotype") if bb else None
+            ps = bb.get("ps") if bb else None
+            phased = bool(bb.get("phased")) if bb else False
+            cnt = bb.get("count", 1) if bb else 1
+            for k in required:
+                if variant_counts.get(k, 0) > 0:
+                    continue
+                p = k.split(":")
+                variants[k] = {
+                    "gt": "1/1" if cnt >= 2 else "0/1",
+                    "count": cnt,
+                    "ps": ps,
+                    "phased": phased,
+                    "haplotype": hap,
+                    "chrom": d["chrom"],
+                    "pos": int(p[1]),
+                    "ref": p[2],
+                    "alt": p[3],
+                    "cluster_rescued": True,
+                }
+                variant_counts[k] = max(variant_counts.get(k, 0), cnt)
+
     def call_alleles(
-        self, vcf_path: str, copy_number: int, conversions: List[Dict]
+        self, vcf_path: str, copy_number: int, conversions: List[Dict],
+        intergenic_cn: int = 2,
     ) -> Dict[str, Any]:
         cn = copy_number if copy_number and copy_number > 0 else 2
         max_alleles = cn
@@ -206,11 +333,32 @@ class CYP2B6StarAlleleCaller(StarAlleleCaller):
         # GRCh37 port where CYP2B7P-shared bases may be reference-encoded.
         self._apply_reference_encoding(variants, variant_counts, cn)
 
+        # Rescue clustered-marker alleles the caller wrote in an equivalent but
+        # non-canonical form (e.g. *17's adjacent SNPs emitted as an ins+del).
+        # Only clustered alleles (*17) are eligible, so all other calls are unchanged.
+        self._rescue_clustered_alleles(variants, variant_counts)
+
         called: List[str] = []
 
-        # Tier 1: structural hybrids (*29/*30) from conversion detection.
-        for allele_name, count in self._get_structural_alleles(conversions).items():
-            for _ in range(count):
+        # Tier 1: structural hybrids (*29/*30) from two orthogonal signals — the
+        # conversion/fusion junction (PSV switch) and the single-copy intergenic CN
+        # dosage (CN<2 => *29 partial deletion, CN>2 => *30 duplication). Take the max
+        # count per allele so either signal can call the event; agreement = corroboration.
+        conv_struct = self._get_structural_alleles(conversions)
+        depth_struct = self._structural_from_intergenic(intergenic_cn)
+        struct_counts: Dict[str, int] = dict(conv_struct)
+        for name, cnt in depth_struct.items():
+            struct_counts[name] = max(struct_counts.get(name, 0), cnt)
+        struct_sources: Dict[str, List[str]] = {
+            name: [
+                s for s, present in
+                (("depth", name in depth_struct), ("conversion", name in conv_struct))
+                if present
+            ]
+            for name in struct_counts
+        }
+        for allele_name in sorted(struct_counts):
+            for _ in range(struct_counts[allele_name]):
                 if len(called) < max_alleles:
                     called.append(allele_name)
 
@@ -259,13 +407,26 @@ class CYP2B6StarAlleleCaller(StarAlleleCaller):
             "method": "phased_consumption_require_all",
             "copy_number": copy_number,
         }
+        if struct_counts:
+            result["structural"] = dict(struct_counts)
+            result["intergenic_cn"] = intergenic_cn
         notes = []
-        if copy_number is not None and copy_number >= 3:
+        for name in sorted(struct_counts):
+            srcs = struct_sources.get(name, [])
+            if len(srcs) >= 2:
+                detail = "intergenic-depth dosage and conversion junction agree"
+            elif srcs == ["depth"]:
+                detail = (
+                    "intergenic-depth dosage; no corroborating conversion junction "
+                    "call (the PSV-sparse 5' junction can hide it)"
+                )
+            elif srcs == ["conversion"]:
+                detail = "conversion junction; not corroborated by intergenic dosage"
+            else:
+                detail = "structural"
+            notes.append(f"{name} structural allele - {detail}")
+        if copy_number is not None and copy_number >= 3 and "*30" not in struct_counts:
             notes.append("Duplication present - allele assignment may be ambiguous")
-        if copy_number is not None and copy_number < 2:
-            notes.append(
-                "Reduced copy number - possible CYP2B6/CYP2B7P hybrid (*29)"
-            )
         if alternatives:
             result["alt_alleles"] = alternatives
             result["phase_unresolved"] = True
@@ -385,6 +546,23 @@ class CYP2B6StarAlleleCaller(StarAlleleCaller):
                 structural["*29"] = structural.get("*29", 0) + count
         return structural
 
+    @staticmethod
+    def _structural_from_intergenic(intergenic_cn: Optional[int]) -> Dict[str, int]:
+        """Depth-based *29/*30 from the single-copy CYP2B6/CYP2B7P intergenic CN
+        variable. That ~40 kb is uniquely mappable, so its copy number is a direct
+        dosage readout of the reciprocal intron4-junction NAHR events that the
+        whole-gene CN averages away: CN<2 => *29 (partial deletion, alleles lost),
+        CN>2 => *30 (duplication). Returns {} at the CN=2 baseline, so normal samples
+        are unaffected."""
+        out: Dict[str, int] = {}
+        if intergenic_cn is None:
+            return out
+        if intergenic_cn < 2:
+            out["*29"] = 2 - intergenic_cn
+        elif intergenic_cn > 2:
+            out["*30"] = intergenic_cn - 2
+        return out
+
 
 # CPIC allele-function -> label used by the phenotype rules.
 _FUNC_NORMAL = "Normal"
@@ -403,8 +581,16 @@ class CYP2B6(Gene):
 
         cyp2b6_cn = result_data["Copy numbers"].get("CYP2B6", 2)
         cyp2b7p_cn = result_data["Copy numbers"].get("CYP2B7P", 2)
+        intergenic_cn = result_data["Copy numbers"].get("CYP2B6_intergenic", 2)
         lines.append(f"CYP2B6: CN={cyp2b6_cn}")
         lines.append(f"CYP2B7P: CN={cyp2b7p_cn}")
+        if intergenic_cn != 2:
+            ev = "*29 partial deletion" if intergenic_cn < 2 else "*30 duplication"
+            lines.append(
+                f"CYP2B6/CYP2B7P intergenic CN={intergenic_cn} -> {ev} "
+                f"({abs(2 - intergenic_cn)} allele(s); single-copy dosage probe over the "
+                "intron4-junction NAHR interval)"
+            )
 
         conversions = result_data.get("gene_conversions", []) or []
         if conversions:
@@ -425,7 +611,8 @@ class CYP2B6(Gene):
 
         star_caller = CYP2B6StarAlleleCaller(self.config, ref=self.ref)
         star_result = star_caller.call_alleles(
-            result_data.get("Variants", ""), cyp2b6_cn, conversions
+            result_data.get("Variants", ""), cyp2b6_cn, conversions,
+            intergenic_cn=intergenic_cn,
         )
         result_data["star_alleles"] = star_result
 

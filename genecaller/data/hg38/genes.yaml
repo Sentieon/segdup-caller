@@ -310,14 +310,22 @@ CYP2B6:
   gene_names:
   - CYP2B6
   - CYP2B7P
-  gene_regions:
-  - chr19:40990928-41018700
+  gene_regions:                     # CYP2B6 broadened 5' onto the single-copy intergenic (non-lifted
+                                    # remainder) to host the *29/*30 CN probe; cf. OTOA. CYP2B7P unchanged.
+  - chr19:40952000-41018700
   - chr19:40923902-40950961
   liftover_regions:
   - - CYP2B6
     - chr19:40990928-40998400,chr19:40999600-41003512,chr19:41003513-41014349,chr19:41014350-41018700
   - - CYP2B7P
     - chr19:40923902-40931370,chr19:40931371-40935280,chr19:40935606-40946395,chr19:40946711-40950961
+  cn_regions:                       # decoupled from liftover: a single-copy intergenic CN variable that
+                                    # captures the *29 partial deletion (CN 1) / *30 duplication (CN 3) —
+                                    # sub-gene NAHR events the whole-gene CN averages away. Bidirectional.
+  - [CYP2B7P, chr19:40923902-40950961]
+  - [CYP2B6_intergenic, chr19:40952000-40978000]   # stable single-copy core (uniquely mappable; excludes
+                                                    # the 40,980-40,990k focal-CNV edge & 40,964-40,968k dip)
+  - [CYP2B6, chr19:40990928-41018700]
   map: data/hg38/CYP2B6_CYP2B7P.dat
   recombination_regions:
   - chr19:41007000-41009400   # intron 4 / exon 5 NAHR hotspot (*29/*30 hybrids)
@@ -327,8 +335,12 @@ CYP2B6:
     five_prime_terminus: 40991282   # + strand: 5' = gene start
     three_prime_terminus: 41018398  # + strand: 3' = gene end
   config:
-    prior_type: gaussian     # stable CN=2 (low CNV burden; only rare *29/*30 hybrids)
-    cn_prior_std: 0.5
+    # CN model is categorical (cn_priors below); the intergenic variable is bidirectional so it admits
+    # both the *29 deletion (CN 1) and the *30 duplication (CN 3). Bodies stay near CN=2 (low burden).
+    cn_priors:
+      CYP2B6:            {0: 0.0005, 1: 0.002, 2: 0.995, 3: 0.002,  4: 0.0005}  # conserved functional gene
+      CYP2B7P:           {0: 0.002,  1: 0.01,  2: 0.982, 3: 0.004,  4: 0.002}   # pseudogene (rare dup, e.g. HG02622)
+      CYP2B6_intergenic: {0: 0.0003, 1: 0.008, 2: 0.983, 3: 0.008,  4: 0.0007}  # *29 DEL(1) / *30 DUP(3), ~1% each
     transition_rate_background: 1e-8   # sticky in stable exonic regions
     transition_rate_hotspot: 0.001     # loose in intron4/exon5 hotspot
     star_allele_file: data/hg38/cyp2b6_star_alleles.tsv

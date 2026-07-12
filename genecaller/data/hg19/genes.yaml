@@ -287,14 +287,21 @@ CYP2B6:
   gene_names:
   - CYP2B6
   - CYP2B7P
-  gene_regions:
-  - chr19:41496833-41524605
+  gene_regions:                     # CYP2B6 broadened 5' onto the single-copy intergenic (non-lifted
+                                    # remainder) to host the *29/*30 CN probe; cf. OTOA. CYP2B7P unchanged.
+  - chr19:41457905-41524605
   - chr19:41429807-41456866
   liftover_regions:
   - - CYP2B6
     - chr19:41496833-41504305,chr19:41505505-41509417,chr19:41509418-41520254,chr19:41520255-41524605
   - - CYP2B7P
     - chr19:41429807-41437275,chr19:41437276-41441185,chr19:41441511-41452300,chr19:41452616-41456866
+  cn_regions:                       # decoupled from liftover: a single-copy intergenic CN variable that
+                                    # captures the *29 partial deletion (CN 1) / *30 duplication (CN 3) —
+                                    # sub-gene NAHR events the whole-gene CN averages away. Bidirectional.
+  - [CYP2B7P, chr19:41429807-41456866]
+  - [CYP2B6_intergenic, chr19:41457905-41483905]   # stable single-copy core (uniquely mappable; +505905 vs hg38)
+  - [CYP2B6, chr19:41496833-41524605]
   map: data/hg19/CYP2B6_CYP2B7P.dat
   recombination_regions:
   - chr19:41512905-41515305
@@ -304,8 +311,12 @@ CYP2B6:
     five_prime_terminus: 41497187
     three_prime_terminus: 41524303
   config:
-    prior_type: gaussian
-    cn_prior_std: 0.5
+    # CN model is categorical (cn_priors below); the intergenic variable is bidirectional so it admits
+    # both the *29 deletion (CN 1) and the *30 duplication (CN 3). Bodies stay near CN=2 (low burden).
+    cn_priors:
+      CYP2B6:            {0: 0.0005, 1: 0.002, 2: 0.995, 3: 0.002,  4: 0.0005}  # conserved functional gene
+      CYP2B7P:           {0: 0.002,  1: 0.01,  2: 0.982, 3: 0.004,  4: 0.002}   # pseudogene (rare dup)
+      CYP2B6_intergenic: {0: 0.0003, 1: 0.008, 2: 0.983, 3: 0.008,  4: 0.0007}  # *29 DEL(1) / *30 DUP(3), ~1% each
     transition_rate_background: "1e-8"
     transition_rate_hotspot: 0.001
     star_allele_file: data/hg19/cyp2b6_star_alleles.tsv
