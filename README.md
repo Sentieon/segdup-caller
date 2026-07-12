@@ -35,7 +35,7 @@ Segdup caller currently supports the following genes and segmental duplication r
 | CYP2D6      | CYP2D6, CYP2D7                       | CN, variants, gene conversion, star alleles |
 | CYP2B6      | CYP2B6, CYP2B7P                      | CN, variants, gene conversion, star alleles |
 | GBA         | GBA1, GBAP1                          | CN, variants, gene conversion |
-| STRC        | STRC, STRCP1                         | CN, variants |
+| STRC        | STRC, STRCP1                         | CN, variants, deletion/carrier (DFNB16), CATSPER2 extent |
 | NCF1        | NCF1, NCF1B                          | CN, variants |
 | CFH         | CFH, CFHR1, CFHR2, CFHR3, CFHR4      | CN, variants |
 | CYP11B1     | CYP11B1, CYP11B2                     | CN, variants, gene conversion |
