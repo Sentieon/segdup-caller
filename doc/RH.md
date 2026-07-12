@@ -165,10 +165,13 @@ Copy number is the primary output:
 The cohort carries real RHD copy-number variation — 12 homozygous deletions and 57
 hemizygous samples — so deletion detection is genuinely tested, not just specificity.
 
-Small variants (GIAB trio, curated truth): RHD SNV/indel calling is strong, with F1 ≈ 0.97
-and precision ≈ 1.0 (HG002, HG003). RHCE calls the well-mappable fraction well (F1 ≈ 0.90)
-but is incomplete over the most divergent part of the RHCE gene body; complete RHCE
-genotyping, and with it C/c typing, is therefore limited.
+Small variants (GIAB trio, curated truth): with the population short-read model, RHD
+SNV/indel calling is strong — F1 ≈ 0.95–0.97 at high precision (HG002, HG003). The result
+is cross-platform: Ultima short reads reproduce the same RHD/RHCE copy number and RhD
+zygosity and reach RHD F1 ≈ 0.92 (SNVs ≈ 0.93–0.95), with a modest indel-recall gap
+consistent with the platform. RHCE calls the well-mappable fraction well (F1 ≈ 0.90) but is
+incomplete over the most divergent part of the RHCE gene body; complete RHCE genotyping,
+and with it C/c typing, is therefore limited.
 
 Antigen typing: across the 226 samples the weak-D and DEL call rate matches population
 expectation — 3 weak-D and 1 DEL carrier, with no evidence of over-calling — and the RhCE
