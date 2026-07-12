@@ -340,6 +340,41 @@ RH:
     cn_priors:
       RHD:  {0: 0.15, 1: 0.35, 2: 0.48, 3: 0.01, 4: 0.01}
       RHCE: {0: 0.0005, 1: 0.001, 2: 0.9975, 3: 0.0005, 4: 0.0005}   # conserved
+OTOA:
+  gene_strand: "+"                 # OTOA (gene1/functional) + OTOAP1 both + strand → direct duplication
+  diff_vcf:
+  - data/b37/OTOA.vcf.gz
+  - data/b37/OTOAP1.vcf.gz
+  gene_names:
+  - OTOA
+  - OTOAP1
+  gene_regions:                    # GRCh37 = hg38 +11321 (base-identical port); full gene (5'-unique + 3'-dup)
+  - 16:21675289-21774321
+  - 16:22556489-22590463
+  cn_regions:                      # full-gene CN vars: the uniquely-mappable 5'-unique anchors OTOA CN
+  - [OTOA, 16:21675289-21774321]         # (immune to OTOAP1 CNV); the 3'-dup gives the OTOA/OTOAP1 split
+  - [OTOAP1, 16:22556489-22590463]
+  longdel:                         # localized recurrent 5'-unique deletion (a partial-gene del the uniform CN can't represent)
+  - [OTOA_recurrentDEL, 16:21676321-21739321]
+  liftover_regions:                # single collinear DIRECT block (~99% id, no ≥300bp indel); 3'-dup only
+  - - OTOA
+    - 16:21740364-21774321
+  - - OTOAP1
+    - 16:22556489-22590463
+  map: data/b37/OTOA_OTOAP1.dat
+  conversion_regions:
+  - region: "16:21740364-21774321"      # OTOA 3' body: OTOAP1->OTOA conversion (p.Glu787* c.2359G>T = DFNB22 allele)
+    fusion_detection: false             # internal conversion, not a terminal fusion
+    min_num_signals: 3                  # high identity: ≥3 PSVs for a tract (tune). p.Glu787* typed directly in
+                                        # genes/otoa.py regardless. NB ~15kb mid-block PSV desert (21,750-21,765k).
+  config:
+    cn_priors:
+      # OTOA: allow deletion (recurrent DFNB22 ~500kb NAHR del removes the whole gene; carrier ~0.1-0.2%).
+      # OTOAP1 pseudogene near-conserved. Tune in validation.
+      OTOA:   {0: 0.0008, 1: 0.003, 2: 0.995, 3: 0.0007, 4: 0.0005}
+      OTOAP1: {0: 0.005, 1: 0.02, 2: 0.965, 3: 0.005, 4: 0.005}
+    longdel_priors:
+      OTOA_recurrentDEL: 0.003     # TEST: ~0.3% recurrent-deletion carrier frequency
 SBDS:
   gene_strand: "-"                 # SBDS (gene1/functional) is on the − strand; SBDSP1 is inverted (+)
   diff_vcf:
