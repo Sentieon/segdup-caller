@@ -246,22 +246,25 @@ sequence and are called correctly regardless.
 
 ### HPRC cohort concordance (226 samples, GRCh38, short-read)
 
-Short-read calls were compared against the phased-assembly truth for the full 226-sample
-HPRC cohort:
+Short-read calls were compared against the phased-assembly truth for the 224 of the
+226-sample HPRC cohort that have usable phased-assembly truth, using a population model bundle:
 
 | Metric | Concordance |
 |--------|-------------|
-| Star diplotype | ~93% (recovers exactly the *6-vs-*9 cases the gene targets) |
-| Copy number (CYP2B6 & CYP2B7P) | ~99% — CYP2B6's own copy number correct in every sample; the single cohort-wide CN miss is one CYP2B7P pseudogene duplication (HG02622, true 2/3) |
+| Star diplotype | 96% (215/224) with a population model bundle; 99% (212/215) on the subset with reliable assembly truth — i.e. excluding samples whose assembly is locally haplotype-collapsed across the exon 4/5 segdup, which merges the two haplotypes and corrupts the truth diplotype. Recovers exactly the *6-vs-*9 cases the gene targets. |
+| Copy number (CYP2B6 & CYP2B7P) | ~99% (223/224) — CYP2B6's own copy number correct in every sample; the single cohort-wide CN miss is one CYP2B7P pseudogene duplication (HG02622, true 2/3). Copy number is depth-based and independent of the variant-calling model bundle. |
 
 The dominant short-read failure mode is at c.785 (rs2279343): it is not a
 paralog-differentiating site (CYP2B7P carries the reference base there) and sits in a
 marker-sparse window, so CYP2B7P reads can dilute a genuine heterozygous *6 call below the
-variant caller's threshold, dropping *6 to *9. Because the contamination can only add
-reference reads (never fabricate the c.785 alt), the caller LD-rescues a diluted c.785
-when its *cis* partner c.516 is a confident call, which is what *6 requires. This recovers
-the lost *6 diplotypes with no false gains (+5 diplotypes, 0 regressions on a clean
-before/after comparison, lifting star concordance from ~88% to ~93%).
+variant caller's threshold, dropping *6 to *9. Two mechanisms recover it. With a population
+model bundle (recommended for production), the population variant prior lifts the diluted
+c.785 to a confident call — this resolves both the *6/*9 dilution and the lone-*4 case
+(c.785 with no c.516 partner to anchor it). Independent of the bundle, the caller also
+LD-rescues a diluted c.785 when its *cis* partner c.516 is a confident call (which is what
+*6 requires); because CYP2B7P contamination can only add reference reads at c.785 (never
+fabricate the alt), this recovers the *6 diplotypes with no false gains. Copy number is
+depth-based and unaffected by the bundle choice.
 
 > Coverage caveat. Every sample in this cohort has CYP2B6 at CN=2 (whole-gene CYP2B6 CNV
 > is very rare), so the ~99% CN figure is essentially a specificity result — the caller
@@ -294,36 +297,66 @@ matches the phased-assembly truth:
 When the c.785 call is LD-rescued the caller flags it (`ld_rescued` in the star output)
 and, since c.516 and c.785 are inferred *cis* by linkage rather than read-phased, reports
 the *trans* alternative too (e.g. `*6/*1` primary with `*9/*4` also possible) — both map
-to the same Intermediate phenotype.
+to the same Intermediate phenotype. With a population model bundle the population prior
+typically recovers c.785 directly, so the `ld_rescued` flag appears mainly without such a bundle.
 
 Known-hard cases in the cohort (short-read limits, not specific to this caller):
 
 | Sample | Truth | Call | Why |
 |--------|-------|------|-----|
-| HG00658, HG01960 | `*4/*1`, `*2/*4` | misses `*4` | `*4` is c.785 alone — no c.516 anchor, so the LD-rescue cannot fire (a lone diluted c.785 is indistinguishable from contamination) |
 | HG01993 | `*6/*1` | `*6/*6` | one haplotype carries a deletion spanning exon 4/5; the other haplotype's `*6` reads read as homozygous — unresolvable from short reads |
-| HG02622 | `*6/*2`, CN 2/3 | `*7/*2`, CN 2/2 | a CYP2B7P duplication; the extra pseudogene copy is not detected and perturbs phasing |
-| HG02145 | `*17/*6` | `*1/*6` | `*17` (a 4-SNV cluster at c.76–86) not resolved from short reads |
+| HG02622 | `*6/*2`, CN 2/3 | `*7/*2`, CN 2/2 | a CYP2B7P duplication; the extra pseudogene copy is not detected and perturbs phasing (the `*6`↔`*7` swap is clinically neutral — both map to Intermediate) |
 
-Long-read input resolves the phase-unresolved and diluted-c.785 cases outright.
+With a population model bundle the diluted-c.785 cases (including lone-`*4`) are recovered
+directly by the population prior; long-read input additionally resolves the phase-unresolved
+cases outright.
+
+### Small-variant accuracy (GIAB reference samples)
+
+Base-level accuracy was measured with `aardvark` against GIAB truth, gated to the CYP2B6
+functional gene ∩ each sample's high-confidence region, using the population short-read
+model. SNV calling is essentially perfect across builds and platforms; the only residual is
+a small number of indels in the exon 4/5 segmental-duplication core.
+
+| Platform / build | Truth | SNV F1 | Indel F1 | Overall F1 |
+|---|---|---|---|---|
+| Illumina, GRCh38 (HG001–005) | v4.2.1 | 1.000 | 1.000 | 1.000 (0.99 on HG003) |
+| Illumina, GRCh38 (HG002) | v5.0q\* | 1.000 | 0.86 | 0.98 |
+| Illumina, GRCh37 / hg19+b37 (HG002) | v5.0q\* | 1.000 | 0.70 | 0.95 |
+| Ultima, GRCh38 (HG001–005) | v4.2.1 | 1.000 | ~0.97 | 1.000 (0.98 on HG001/005) |
+| Ultima, GRCh38 (HG002) | v5.0q\* | 1.000 | 0.77 | 0.96 |
+
+\* v5.0q (HG002 only) covers the exon 4/5 core 100%, so it is the most complete gate; the
+v4.2.1 benchmark excludes ~7% of the gene (part of that core), which is why it scores higher.
+
+SNV F1 is 1.000 on every arm — including the exon 4/5 core where the `*6`/`*9`-defining
+c.516 and c.785 sit — confirming the paralog-aware calling at the base level, not only at the
+star level. The residual is a handful of core indels (indel F1 0.70–0.86 against the complete
+v5.0q truth), a known short-read segmental-duplication indel-recall limit. Ultima short reads
+reach parity with Illumina, and the GRCh37 (hg19/b37) SNV result equals GRCh38 with only a
+small indel dip. CYP2B7P (the pseudogene) is excluded from scoring — GIAB's diploid truth
+does not cover it — and is validated instead against the assembly cohort (copy number above).
 
 ## Known Limitations
 
-- The star-allele database covers the core CPIC-actionable alleles; rare PharmVar alleles
-  not in the table receive no designation (e.g. `*17`, see HG02145 above).
+- The star-allele database covers the core CPIC-actionable alleles plus `*17`; rarer PharmVar
+  alleles not in the table receive no designation. `*17` (a 3-SNV cluster in exon 1) is
+  reconstructed even when the variant caller emits the cluster as an equivalent
+  insertion+deletion rather than three separate SNVs.
 - `*29`/`*30` hybrids are rare and are detected from copy-number dosage, corroborated by
   the gene-conversion signal when present. Detection is validated on constructed positive
   controls (both deletion and duplication) and is specific across the reference cohort, but
   no natural carrier was available, so real-data sensitivity is unconfirmed and a call
   should be confirmed orthogonally. A `*30` duplication is reported, but its metabolizer
   impact is left uncertain because its functional consequence is not established.
-- c.785 (rs2279343) at low allele fraction. The `*6`-defining c.785 is diluted by CYP2B7P
-  reads and is LD-rescued only when its c.516 partner is a confident call. A c.785 that
-  appears alone (i.e. `*4`) has no such anchor, so it can be missed when its alt-read
-  fraction is low. In the two observed cases (HG00658, HG01960) the locus is actually
-  paralog-clean — the flanking PSV shows no CYP2B7P leak — and the deficit is
-  reference/mapping bias against the alt allele (VAF ~0.22-0.30), leaving no dilution
-  or cis-phasing signal available to rescue it. Long-read input resolves it directly.
+- c.785 (rs2279343) at low allele fraction. The `*6`-defining c.785 can be diluted by CYP2B7P
+  reads or depressed by reference/mapping bias (VAF ~0.22-0.30 in the lone-`*4` cases HG00658,
+  HG01960, where the locus is actually paralog-clean — the flanking PSV shows no CYP2B7P leak).
+  Running with a population model bundle recovers it: the population prior lifts the low-fraction
+  c.785 to a confident call, resolving both the *6/*9 dilution and the lone-`*4` case. Without a
+  population bundle the caller still LD-rescues c.785 when its *cis* partner c.516 is confident
+  (the `*6` case), but a lone c.785 (`*4`) then has no anchor and can be missed; long-read input
+  also resolves it directly.
 - CYP2B7P copy-number gains (extra pseudogene copies) are not detected (HG02622); CYP2B6's
   own copy number is called reliably.
 - Compound-heterozygote vs. combination-allele ambiguity: when a combination allele's
