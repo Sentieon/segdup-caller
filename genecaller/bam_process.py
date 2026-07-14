@@ -341,7 +341,7 @@ class Bam:
         extract: str,
         target: str,
         out_bam: str,
-        gene_mapping: GeneMapping,
+        gene_mapping: Optional[GeneMapping] = None,
         crop_first: bool = False,
         min_ratio: float = 0.3,
         failed_margin: int = 100,
@@ -475,7 +475,10 @@ class Bam:
         # reads that straddle the dark region boundary
         raw_regions = self.to_region(ref_positions, 10)
         failed_region = ""
-        if raw_regions:
+        # gene_mapping maps lifted (target) coords back to source copies; a caller
+        # that collapses a single region onto itself (LPA) has no mapping and no
+        # failed-region concept, so it passes gene_mapping=None.
+        if raw_regions and gene_mapping is not None:
             raw_regions = (
                 IntervalList(region=",".join(raw_regions))
                 .intersect(extract.replace(" ", ","))

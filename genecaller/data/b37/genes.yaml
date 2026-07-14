@@ -441,6 +441,30 @@ SBDS:
       # near-conserved (no common recurrent deletion).
       SBDS:   {0: 0.0005, 1: 0.001, 2: 0.9975, 3: 0.0005, 4: 0.0005}
       SBDSP1: {0: 0.01, 1: 0.04, 2: 0.93, 3: 0.01, 4: 0.005}
+LPA:                                  # Lp(a) KIV-2 VNTR — no paralog. Standalone depth+AD
+                                      # estimator (genes/lpa.py). b37 is coordinate-identical to
+                                      # hg19 (bare contig names); KIV-2 unit is 5547M / 100%
+                                      # colinear with the hg38 unit (frame + marker bases preserved).
+                                      # ~7 collapsed KIV-2 ref copies; ref_copies advisory. dp_norm +
+                                      # flanks seeded from hg38, to confirm on a b37 sample.
+  gene_strand: "-"
+  gene_names:
+  - LPA
+  gene_regions:
+  - 6:160952514-161085307             # full LPA locus (reporting/reference only; offset ~+421032)
+  config:
+    skip_variant_call: true
+    kiv2_array: 6:161032600-161068700      # ~7 collapsed KIV-2 ref copies (extract)
+    kiv2_unit: 6:161033141-161038687       # single 5547bp unit = collapse target + marker frame (5547M vs hg38)
+    flank_regions: 6:161028049-161032019,6:161068750-161072500  # unique L+R flanks = CN2 baseline
+    ref_copies: 7
+    dp_norm: 1.093
+    catalog_file: data/b37/LPA_kiv2_catalog.npz  # build-independent unit-local library
+    min_marker_depth: 20
+    min_markers: 8
+    gain_gate: 1.25
+    spread_gate: 4
+    spread_margin: 1.15
 main:
   cnv_model: data/SentieonGeneCaller0.1.bundle/cnv.model
   min_map_qual: 45

@@ -45,6 +45,7 @@ Segdup caller currently supports the following genes and segmental duplication r
 | RH          | RHD, RHCE                            | CN (RhD zygosity), variants, gene conversion |
 | SBDS        | SBDS, SBDSP1                        | CN, variants, gene conversion (SDS carrier/affected) |
 | OTOA        | OTOA, OTOAP1                        | CN, variants, gene conversion (DFNB22 deletion/carrier) |
+| LPA         | LPA (KIV-2 VNTR)                    | KIV-2 copy number: total + allele split (Lp(a)/ASCVD) |
 
 > **Note:** Segdup caller is expanding the list of supported genes. If there are particular genes you hope to support, or you encounter any issues, please [file an issue](https://github.com/Sentieon/segdup-caller/issues).
 
@@ -113,8 +114,8 @@ Targeted variant caller for genes with highly similar paralogs.
   --genes GENES, -g GENES   List of genes to be called (comma separated).
                             If not specified, all supported genes will be called.
                             Supported genes: CFH, CYP11B1, CYP2B6, CYP2D6, GBA,
-                            HBA, IKBKG, NCF1, OTOA, PMS2, RCCX, RH, SBDS, SMN1,
-                            STRC
+                            HBA, IKBKG, LPA, NCF1, OTOA, PMS2, RCCX, RH, SBDS,
+                            SMN1, STRC
 
   --sample_name SAMPLE_NAME Sample name (default: SM tag in the input short-read
                             BAM file will be used)

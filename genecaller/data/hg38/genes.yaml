@@ -477,6 +477,37 @@ OTOA:
       OTOAP1: {0: 0.005, 1: 0.02, 2: 0.965, 3: 0.005, 4: 0.005}
     longdel_priors:
       OTOA_recurrentDEL: 0.003     # TEST: ~0.3% recurrent-deletion carrier frequency
+LPA:                                  # Lp(a) KIV-2 VNTR — no paralog. Standalone depth+AD
+                                      # estimator (genes/lpa.py), NOT the paralog CN solver.
+                                      # Collapses the ~6 ref KIV-2 copies onto one unit via
+                                      # liftover, counts by depth ratio, splits alleles by
+                                      # marker-panel AD. Validated r=0.994 (total) / r=0.981
+                                      # (copy-level AD) vs HPRC assembly (LPA_BUILD_PLAN §Probe 2).
+  gene_strand: "-"                    # LPA minus strand (unused by the estimator)
+  gene_names:
+  - LPA
+  gene_regions:
+  - chr6:160531482-160664275          # full LPA locus (reporting/reference only)
+  config:
+    skip_variant_call: true           # no small variants: skip pop-VCF/F1 machinery
+    kiv2_array: chr6:160611568-160646868   # the ~6 collapsed KIV-2 reference copies (extract)
+    kiv2_unit: chr6:160612109-160617655    # single 5547bp unit = collapse target + marker frame
+    flank_regions: chr6:160607000-160611000,chr6:160647500-160651500  # unique L+R flanks = CN2 baseline
+    ref_copies: 6
+    dp_norm: 1.093                     # collapse block-depth-inflation correction: N = 2*(unit_dp/flank_dp)/dp_norm.
+                                       # calibrated vs assembly truth, 38 samples: total r=0.984 (33/38 within 2), cf. STRC 1.08.
+    # allele split: reference-allele-pair deconvolution over a 50-marker unit panel.
+    catalog_file: data/hg38/LPA_kiv2_catalog.npz  # build-independent library (POS, ALT, allele-vectors)
+    min_marker_depth: 20               # per-marker min collapsed depth to use a position
+    min_markers: 8                     # min panel markers covered to attempt a deconvolution
+    # two-signal confidence gate (else abstain to total-only): the split must beat a single
+    # allele (gain) AND be identifiable (few near-optimal pairs disagree on the count, spread).
+    gain_gate: 1.25                    # 2-allele fit must beat best single allele by >=1.25x
+    spread_gate: 4                     # max minor-count spread among near-optimal pairs (catches novel alleles)
+    spread_margin: 1.15                # residual factor defining "near-optimal" (tuned to the 181-sample library)
+                                       # production LOO vs assembly (caller's own collapse, 181-sample HPRC cohort):
+                                       # 98/181 confidently split (54%), 87% of those within 2 copies; 2 leaks (1.1%),
+                                       # 47/49 catastrophic caught. Gate tuned on the shipped library; retune if the catalog grows.
 main:
   cnv_model: data/SentieonGeneCaller0.1.bundle/cnv.model
   min_map_qual: 45

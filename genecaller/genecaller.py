@@ -119,9 +119,12 @@ def process_single_gene(gene_data: tuple) -> Dict:
         # Apply gene-specific dp_norm if configured
         dp_norm = gene_config.get("dp_norm") if gene_config else None
 
-        # Liftover
-        gene_logger.info("Performing liftover...")
-        _perform_liftover(gene, read_data, ref)
+        # Liftover (paralog realign onto each copy). Genes that do their own
+        # region collapse instead (e.g. LPA's KIV-2 VNTR) opt out via
+        # needs_liftover=False and handle it inside call_cn.
+        if getattr(gene, "needs_liftover", True):
+            gene_logger.info("Performing liftover...")
+            _perform_liftover(gene, read_data, ref)
 
         # Apply dp_norm to both original and liftover BAMs
         if dp_norm is not None:
