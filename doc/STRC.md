@@ -176,25 +176,27 @@ biallelically deleted.
 ### Copy number (population cohort)
 
 Validated on **226 population samples** (HPRC / 1000 Genomes assembly cohort, GRCh38) against
-**paralog-resolved assembly truth** — per-haplotype deletion calls read from the assembly
-alignments (not from a naïve joint copy-number VCF, which mis-calls zygosity inside the segdup),
-with the uniquely-mappable CATSPER2 depth as the zygosity arbiter.
+**paralog-resolved assembly truth** — per-haplotype STRC / STRCP1 copy counts read from each
+sample's genome assembly, with the uniquely-mappable CATSPER2 depth as the independent zygosity
+arbiter. (223 of the 226 samples have a two-haplotype assembly.)
 
 | metric | result |
 |---|---|
 | STRC recurrent-deletion detection (sensitivity) | 5 / 5 real carriers, 0 missed |
 | STRC deletion specificity | 1 borderline false positive (HG03874) across the cohort |
 | CATSPER2 co-deletion extent typed on the 5 carriers | 5 / 5 correct |
+| STRC copy-number concordance vs assembly truth | 218 / 223 (97.8%); HPRC-adjusted 220 / 223 (correcting two assembly-truth errors) |
+| STRCP1 copy-number concordance vs assembly truth | 220 / 223 (98.7%); HPRC-adjusted 222 / 223 (correcting two assembly-truth errors) |
 
 Across the cohort STRC copy number is 2 in 202 samples, 1 in 6, and 3–4 in 18 (benign gains).
 The six STRC-copy-loss calls comprise five deletion carriers confirmed against assembly truth
 (all correctly STRC=1 / STRCP1=2, each co-deleting CATSPER2 → the deafness-infertility extent)
 and one borderline false positive (HG03874, at the depth threshold; assembly-normal). No real
-carrier is missed. STRCP1-side losses and 3-copy gains are benign and flagged as such (STRCP1 is
-a polymorphic pseudogene and its dosage carries no hearing-loss meaning). A gentle
-depth-normalization (`dp_norm` = 1.08) corrects the ~11% depth inflation of the paralogous
-STRC/STRCP1 block while sparing the unique CATSPER2 probe; it removes two benign-gain false
-positives and introduces zero false deletions.
+carrier is missed (0 false negatives). Apart from that single borderline false positive, every
+other copy-number discordance is in the clinically-neutral **gain** direction, and two of those
+(HG01952, HG03516) are assembly-representation artifacts (one locus placed redundantly on several
+assembly contigs) rather than caller errors. STRCP1-side losses and 3-copy gains are benign and flagged as such
+(STRCP1 is a polymorphic pseudogene and its dosage carries no hearing-loss meaning).
 
 ### Small-variant accuracy (GIAB, curated truth)
 
@@ -235,7 +237,8 @@ either platform**.
 Validated (GRCh38 Illumina unless noted):
 
 - STRC copy number and recurrent-deletion detection — 5/5 real carriers on the 226-sample
-  cohort, 0 missed, ~99% non-gain concordance vs paralog-resolved assembly truth.
+  cohort, 0 missed, 1 borderline false positive; STRC/STRCP1 copy-number concordance 97.8% /
+  98.7% vs paralog-resolved assembly truth.
 - CATSPER2 co-deletion extent (Deafness-Infertility Syndrome vs STRC-only) — from the unique
   CATSPER2 depth probe.
 - Benign discrimination of STRCP1 deletions and of 3-copy gains.
