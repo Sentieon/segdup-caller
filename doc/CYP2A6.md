@@ -216,16 +216,8 @@ CYP2A6:
 Ground truth for CYP2A6 comes from:
 
 - HPRC phased diploid assemblies (223 samples with usable truth) — the primary per-sample
-  truth. Each sample's two assembled haplotypes are aligned against the CYP2A6 and CYP2A7
-  gene sequences (minimap2, secondary alignments retained); the hits are clustered into
-  distinct genomic loci, and each locus is assigned to whichever paralog it matches best. A
-  locus is counted as one clean gene copy when its alignment identity is ≥ 0.92 over at
-  least half the gene body, and copy number is the number of clean copies summed over the
-  two haplotypes. Because copies are counted directly rather than inferred from a single
-  spanning alignment, this **represents `*1×2` duplications as CN 3 and `*4` whole-gene
-  deletions as CN < 2** — a `*4` crossover drops the exon-body identity to ~0.83, so the
-  fused copy is not counted as clean. An assembly CNV track is not used (it is unreliable at
-  segmental duplications).
+  truth for copy number and star diplotype. The cohort includes real `*1×2` duplications
+  (CYP2A6 CN 3) and `*4` whole-gene deletions (CN < 2), so both are exercised.
 - GIAB HG001–HG005 (short-read), with the Ashkenazi trio (HG002/3/4) providing a
   Mendelian cross-check.
 - PharmVar allele definitions. The assembly truth is corroborated by population genetics:
@@ -244,9 +236,7 @@ Ground truth for CYP2A6 comes from:
 
 ### HPRC cohort concordance (223 samples, GRCh38, short-read, population bundle)
 
-Copy number and star diplotype are compared per sample against the assembly truth described
-above. Because that truth counts gene copies directly, duplications and deletions are both
-represented, and no sample needs to be excluded as an assembly-truth artifact. One sample
+Copy number and star diplotype are compared per sample against the assembly truth. One sample
 (HG03492) has no usable assembly alignment and is not scored.
 
 | Metric | Concordance | Comment |

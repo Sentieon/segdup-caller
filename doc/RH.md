@@ -158,12 +158,13 @@ Copy number is the primary output:
 
 | metric | result |
 |---|---|
-| RHD copy number, exact | 214 / 216 (99.1%) |
-| RHCE copy number, exact | 215 / 216 (99.5%) |
+| RHD copy number, exact | 222 / 223 (99.6%) |
+| RHCE copy number, exact | 222 / 223 (99.6%) |
 | RhD-negative (RHD CN0) detection | sensitivity and specificity 1.00 |
 
-The cohort carries real RHD copy-number variation — 12 homozygous deletions and 57
-hemizygous samples — so deletion detection is genuinely tested, not just specificity.
+The cohort carries real RHD copy-number variation — 12 homozygous deletions, 59 hemizygous
+samples, and one RHD triplication — so both deletion and duplication detection are genuinely
+tested, not just specificity.
 
 Small variants (GIAB trio, curated truth): with the population short-read model, RHD
 SNV/indel calling is strong — F1 ≈ 0.95–0.97 at high precision (HG002, HG003). The result
