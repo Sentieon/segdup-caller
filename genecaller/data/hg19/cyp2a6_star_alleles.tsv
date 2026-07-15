@@ -1,0 +1,15 @@
+allele	function	tier	rsid	chrom	pos	ref	alt	effect	backbone	associated_variants
+*4	No Function	1	STRUCTURAL	STRUCTURAL	*4	.	.	Whole-gene deletion (CYP2A6 CN<2; = CYP2D6*5)	0
+*1x2	Increased	1	STRUCTURAL	STRUCTURAL	*1x2	.	.	Gene duplication (CYP2A6 CN>2)	0
+*12	Decreased	1	STRUCTURAL	STRUCTURAL	*12	.	.	CYP2A7::CYP2A6 5' hybrid (intron-2 junction; severely decreased)	0
+*34	Decreased	1	STRUCTURAL	STRUCTURAL	*34	.	.	CYP2A7::CYP2A6 5' hybrid (intron-4 junction)	0
+*2	No Function	2	rs1801272	chr19	41354533	A	T	L160H	0
+*5	No Function	2	rs5031017	chr19	41349750	C	A	G479V (exon 9; unstable enzyme)	0
+*20	No Function	2	rs568811809	chr19	41354189	CTT	C	frameshift (2-bp deletion)	0
+*13	Decreased	3	rs28399433	chr19	41356379	A	C	-48T>G (TATA) + rs28399434	0	chr19:41356319:C:T
+*9	Decreased	3	rs28399433	chr19	41356379	A	C	-48T>G (TATA box; reduced expression)	0
+*10	Decreased	3	rs5031016	chr19	41349774	A	G	I471T + R485L	0	chr19:41349732:C:A
+*7	Decreased	3	rs5031016	chr19	41349774	A	G	I471T	0
+*35	Decreased	3	rs143731390	chr19	41349874	T	A	N438Y	0
+*17	Decreased	3	rs28399454	chr19	41351267	C	T	V365M	0
+*8	Normal	5	rs28399468	chr19	41349732	C	A	R485L	0

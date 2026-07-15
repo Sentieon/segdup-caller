@@ -472,3 +472,54 @@ main:
   min_map_qual: 45
   cn_prior_std: 2
   conversion_db: data/hg19/known_gene_conversions.tsv
+
+CYP2A6:                              # nicotine/coumarin pharmacogene; CYP2A7 pseudogene paralog (~95% id,
+                                    # - strand tandem). Single co-oriented liftover block (no >=300bp indel).
+  gene_strand: "-"
+  diff_vcf:
+  - data/hg19/CYP2A6.vcf.gz
+  - data/hg19/CYP2A7.vcf.gz
+  gene_names:
+  - CYP2A6
+  - CYP2A7
+  gene_regions:                     # = liftover span (Step-3 invariant; .dat mapped 40841650-40851400)
+  - chr19:41347556-41357305
+  - chr19:41379437-41389090
+  liftover_regions:                 # single segment per gene (co-oriented forward map, reverse=False)
+  - - CYP2A6
+    - chr19:41347556-41357305
+  - - CYP2A7
+    - chr19:41379437-41389090
+  map: data/hg19/CYP2A6_CYP2A7.dat
+  cnv_exclude_regions: []
+  recombination_regions:
+  - chr19:41354669-41355722         # intron 2 - *12 hybrid (CYP2A7 5'+ex1-2 / CYP2A6 ex3-9)
+  - chr19:41352957-41354123         # intron 4 - *34 hybrid
+  - chr19:41347556-41349700         # 3'UTR / 3'-flank - *1B benign conversion + *4 deletion crossover
+  conversion_regions:
+  - region: "chr19:41347556-41357305"
+    fusion_detection: true
+    five_prime_terminus: 41356352   # - strand: 5' = high coord (exon 1)
+    three_prime_terminus: 41349446  # - strand: 3' = low coord (exon 9)
+    min_num_signals: 3              # 95% id + common *1B 3'UTR tract; tune vs cohort at P5
+  longdel:                          # *4 whole-gene deletion: the crossover removes the exon body but
+  - [CYP2A6_4del, chr19:41349705-41356398]   # RETAINS the 3'-flank (40841651-40843795). A deletion
+                                    # DOF over the exon body so *4/*4 floors the functional exon CN to
+                                    # 0; the whole-gene CN alone averages retained-flank CN2 with the
+                                    # deleted body CN0 -> spurious CN1. No independent body DUP (*1x2
+                                    # is whole-gene, body+flank together), so a deletion-only longdel
+                                    # is correct here, not a bidirectional cn_region.
+  config:
+    prior_type: gamma               # *1x2 dup AND *4 del are real -> asymmetric CN (like CYP2D6)
+    gamma_shape: 3.0
+    gamma_scale: 0.67               # mean = alpha*beta = 2.0
+    transition_rate_background: 1e-8
+    transition_rate_hotspot: 0.001
+    longdel_priors:
+      CYP2A6_4del: 0.05             # *4 is common (East Asian); ~12% carrier freq in the HPRC cohort
+    psv_del_gate:                    # veto a depth-driven *4 del if the CYP2A6/CYP2A7 PSV allele
+      region: chr19:41349705-41356398   # ratio contradicts it (exon-body unique depth is mappability-
+      ratio: 0.42                    # fragile). Cohort: true het *4 <=0.37, CN2 >=0.48. (+505905 vs hg38)
+      min_sites: 5
+    star_allele_file: data/hg19/cyp2a6_star_alleles.tsv
+    backbone_file: data/hg19/cyp2a6_backbone.tsv
