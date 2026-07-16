@@ -339,6 +339,24 @@ class Bam:
         result.check_returncode()
         return results
 
+    @staticmethod
+    def _lift_sa_tag(sa_tag: str, new_chr: str, primary_offset: int) -> str:
+        # Each SA record sits on its own target contig (chr:start-end); use that contig's own offset, not the primary's.
+        lifted = []
+        for sa in sa_tag.split(";"):
+            if not sa:
+                lifted.append(sa)
+                continue
+            flds = sa.split(",")
+            try:
+                sa_offset = int(flds[0].split(":")[1].split("-")[0]) - 1
+            except (IndexError, ValueError):
+                sa_offset = primary_offset
+            flds[0] = new_chr
+            flds[1] = str(int(flds[1]) + sa_offset)
+            lifted.append(",".join(flds))
+        return ";".join(lifted)
+
     def liftover(
         self,
         extract: str,
@@ -422,16 +440,7 @@ class Bam:
             if read.has_tag("SA"):
                 sa_tag = read.get_tag("SA")
                 if sa_tag:
-                    new_sa_tag = []
-                    for sa in sa_tag.split(";"):
-                        if sa:
-                            flds = sa.split(",")
-                            flds[0] = chr
-                            flds[1] = str(int(flds[1]) + offset)
-                            new_sa_tag.append(",".join(flds))
-                        else:
-                            new_sa_tag.append(sa)
-                    a.set_tag("SA", ";".join(new_sa_tag))
+                    a.set_tag("SA", self._lift_sa_tag(sa_tag, chr, offset))
             out_bamh.write(a)
         liftover_tmp_bamh.close()
         out_bamh.close()
