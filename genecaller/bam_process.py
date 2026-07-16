@@ -214,6 +214,7 @@ class Bam:
         out_bamh = self.init_outbamh(out_bam)
         for region in regions.replace(",", " ").split():
             start, end = [int(s) for s in region.split(":")[1].split("-")]
+            start -= 1  # region is 1-based inclusive; pysam positions are 0-based
             for read in self.bamh.fetch(region=region):
                 if not read.query_sequence:
                     continue
@@ -221,8 +222,10 @@ class Bam:
                 qual = read.query_qualities
                 if read.reference_start < start:
                     for idx, pos in enumerate(ref_positions):
-                        if pos and pos >= start:
+                        if pos is not None and pos >= start:
                             break
+                    else:
+                        continue  # no aligned base in region; nothing to keep
                     read.query_sequence = read.query_sequence[idx:]
                     ref_positions = ref_positions[idx:]
                     qual = qual[idx:]
@@ -237,7 +240,7 @@ class Bam:
                         if op not in (2, 5):
                             cur_idx += length
                     read.cigartuples = cigar
-                    read.reference_start = ref_positions[0]
+                    read.reference_start = int(ref_positions[0])
                 if read.reference_end > end:
                     for idx, pos in enumerate(ref_positions[::-1]):
                         if pos and pos <= end:
