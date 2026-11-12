@@ -874,12 +874,15 @@ class PMS2(Gene):
                 if pms2_ref_swap_region:
                     conversion_data["pms2_reference_swap_region"] = pms2_ref_swap_region
 
-                conversion_sites = []
+                site_pos = {}
                 for seg in event.contributing_segments:
-                    conversion_sites.extend(
-                        [s.id for s in seg.signals if s.is_conversion_site()]
-                    )
-                conversion_data["conversion_sites"] = list(set(conversion_sites))
+                    for s in seg.signals:
+                        if s.is_conversion_site():
+                            site_pos.setdefault(s.id, s.position)
+                # de-duplicated, in genomic order (deterministic output)
+                conversion_data["conversion_sites"] = sorted(
+                    site_pos, key=lambda sid: (site_pos[sid], sid)
+                )
 
                 result_data["gene_conversions"].append(conversion_data)
 
