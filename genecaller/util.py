@@ -253,24 +253,8 @@ class IntervalList(object):
         for rgn in input_region.split(","):
             chr, parts = rgn.split(":")
             start, end = [int(p) for p in parts.split("-")]
-            regions.setdefault(chr, []).append([start - 1, end])
-        for chrom in regions:
-            v = []
-            s0 = e0 = None
-            for s, e in sorted(regions[chrom]):
-                if e0 is None:
-                    s0 = s
-                    e0 = e
-                elif s > e0:
-                    v.extend((s0, e0))
-                    s0 = s
-                    e0 = e
-                else:
-                    e0 = e
-            if e0 is not None:
-                v.extend((s0, e0))
-            regions[chrom] = v
-        return regions
+            regions.setdefault(chr, []).append((start - 1, end))
+        return {chrom: self.merge_regions(r) for chrom, r in regions.items()}
 
     def load_bed(self, path: str) -> Dict[str, List[int]]:
         regions = {}
@@ -285,25 +269,9 @@ class IntervalList(object):
             if len(cols) < 3:
                 continue
             chrom, start, end = cols[:3]
-            regions.setdefault(chrom, []).append([int(start), int(end)])
+            regions.setdefault(chrom, []).append((int(start), int(end)))
         fp.close()
-        for chrom in regions:
-            v = []
-            s0 = e0 = None
-            for s, e in sorted(regions[chrom]):
-                if e0 is None:
-                    s0 = s
-                    e0 = e
-                elif s > e0:
-                    v.extend((s0, e0))
-                    s0 = s
-                    e0 = e
-                else:
-                    e0 = e
-            if e0 is not None:
-                v.extend((s0, e0))
-            regions[chrom] = v
-        return regions
+        return {chrom: self.merge_regions(r) for chrom, r in regions.items()}
 
     def get(self, c: str, s: int, e: int) -> List[Tuple[int, int]]:
         r = self.regions.get(c)
@@ -379,7 +347,7 @@ class IntervalList(object):
                 s0 = s
                 e0 = e
             else:
-                e0 = e
+                e0 = max(e0, e)  # an interval nested in the block must not cut it short
         if e0 is not None:
             v.extend((s0, e0))
         return v
@@ -418,7 +386,7 @@ class IntervalList(object):
         # Process all chromosomes from both self and input regions
         all_chrs = set(self.regions.keys()) | set(input_regions.keys())
 
-        for chr in all_chrs:
+        for chr in sorted(all_chrs):  # a set's own order follows the hash seed
             rgn = input_regions.get(chr, [])
             if chr in self.regions:
                 i = 0
@@ -800,7 +768,7 @@ class GeneMapping:
         final_in = ["".join([ap[k] for k in sorted(ap.keys())]) for ap in alleles_pos]
         lifted = [rc(s) if self.reverse else s for s in final_in]
         new_ref = tgt_ctx
-        new_alts = list(set([a for a in lifted if a != new_ref]))
+        new_alts = sorted(set([a for a in lifted if a != new_ref]))  # not in hash order
         if not new_alts:
             return
         gt = []

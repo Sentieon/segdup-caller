@@ -766,7 +766,7 @@ class Gene:
                                 {
                                     "event_name": event_name,
                                     "match_score": score,
-                                    "matched_variants": list(matched_ids),
+                                    "matched_variants": sorted(matched_ids),
                                 }
                                 for event_name, score, matched_ids in matches
                             ]

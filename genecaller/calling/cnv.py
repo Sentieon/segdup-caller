@@ -113,6 +113,18 @@ def staged_run(bam: Any, param: Dict[str, Any]) -> Optional[Tuple[str, str]]:
     return staged
 
 
+def _reference_order(chroms: Any, ref: str) -> List[str]:
+    """chroms in the reference's .fai order; a set's own order follows the hash seed."""
+    if len(chroms) < 2:
+        return list(chroms)
+    try:
+        with open(ref + ".fai") as fh:
+            rank = {line.split("\t", 1)[0]: i for i, line in enumerate(fh)}
+    except OSError:
+        rank = {}
+    return sorted(chroms, key=lambda c: (rank.get(c, len(rank)), c))
+
+
 def call_depth(bam: Any, output: str, param: Dict[str, Any]) -> None:
     # Import locally to avoid a circular import with bam_process at module load.
     from ..bam_process import Segment, DepthSegment
@@ -123,7 +135,7 @@ def call_depth(bam: Any, output: str, param: Dict[str, Any]) -> None:
         chrs = set()
         for parts in param["region"].split(","):
             chrs.add(parts.split(":")[0])
-        param["region"] = ",".join(chrs)
+        param["region"] = ",".join(_reference_order(chrs, bam.ref))
     prefix = output[: output.index(".vcf")] if ".vcf" in output else output
     output_norm = param.get("output_norm", f"{prefix}.norm.tsv")
     if orig_region:
