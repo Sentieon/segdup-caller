@@ -116,8 +116,9 @@ def process_single_gene(gene_data: tuple) -> Dict:
     gene_logger.info(f"Processing gene {', '.join(gene.gene_names)}")
 
     try:
-        # Apply gene-specific dp_norm if configured
+        # dp_norm scales the source (direct) depth; dp_norm_liftover the lifted depth (defaults to dp_norm)
         dp_norm = gene_config.get("dp_norm") if gene_config else None
+        dp_norm_lo = gene_config.get("dp_norm_liftover", dp_norm) if gene_config else None
 
         # Liftover (paralog realign onto each copy). Genes that do their own
         # region collapse instead (e.g. LPA's KIV-2 VNTR) opt out via
@@ -126,12 +127,12 @@ def process_single_gene(gene_data: tuple) -> Dict:
             gene_logger.info("Performing liftover...")
             _perform_liftover(gene, read_data, ref)
 
-        # Apply dp_norm to both original and liftover BAMs
-        if dp_norm is not None:
+        if dp_norm is not None or dp_norm_lo is not None:
             for rd in read_data.values():
-                rd["bam"].dp_norm = dp_norm
-                if "liftover" in rd:
-                    rd["liftover"].dp_norm = dp_norm
+                if dp_norm is not None:
+                    rd["bam"].dp_norm = dp_norm
+                if "liftover" in rd and dp_norm_lo is not None:
+                    rd["liftover"].dp_norm = dp_norm_lo
 
         # Configure variant calling parallelism for this gene
         gene.variant_call_threads = min(

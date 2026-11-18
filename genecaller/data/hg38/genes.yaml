@@ -21,6 +21,7 @@ CFH:
     - chr1:196911484-196914172,chr1:196914546-196934426,chr1:196934427-196938898,chr1:196941030-196948803,chr1:196827190-196832189
   map: data/hg38/CFHA_CFHB.dat
   config:
+    dp_norm_liftover: 0.9463  # collapsed u(r), fit on 278 HPRC/1000G Illumina samples
     cn_priors:
       CFH: {0: 0.0005, 1: 0.0005, 2: 0.998, 3: 0.0005, 4: 0.0005}  # Very conserved
       CFHR31: {0: 0.19, 1: 0.3, 2: 0.5, 3: 0.005, 4: 0.005}      # Het del most common, hom del next
@@ -66,6 +67,7 @@ CYP2D6:
     three_prime_terminus: 42126499
     five_prime_terminus: 42130865
   config:
+    dp_norm_liftover: 1.1454  # collapsed u(r), fit on 278 HPRC/1000G Illumina samples
     prior_type: gamma        # Allows asymmetric distribution
     gamma_shape: 3.0         # Shape parameter (α)
     gamma_scale: 0.67        # Scale parameter (β), mean = α×β = 2.0
@@ -95,6 +97,7 @@ GBA:
     three_prime_terminus: 155234452
     fusion_detection: true
   config:
+    dp_norm_liftover: 1.0842  # collapsed u(r), fit on 278 HPRC/1000G Illumina samples
     cn_priors:
       GBA1: {0: 0.0005, 1: 0.001, 2: 0.9975, 3: 0.0005, 4: 0.0005}   # Highly conserved
       GBAP1: {0: 0.05, 1: 0.20, 2: 0.74, 3: 0.005, 4: 0.005}        # Deletion-prone pseudogene
@@ -251,7 +254,8 @@ STRC:
   - [CATSPER2, chr15:43628503-43668118]
   map: data/hg38/STRC_STRCP1.dat
   config:
-    dp_norm: 1.08                     # corrects the ~11% paralogous STRC/STRCP1 block depth inflation
+    dp_norm: 1.0  # direct k(r)
+    dp_norm_liftover: 1.0546  # collapsed u(r), fit on 278 HPRC/1000G Illumina samples
                                       # (cohort median block CN 4.45 vs 4.0); gentler than the segdup
                                       # neighbours (RCCX/HBA/IKBKG 1.1-1.15) to spare the unique CATSPER2.
                                       # 248-cohort validated vs assembly truth: fixes 2 benign gain FPs,
@@ -279,7 +283,8 @@ HBA:
    - [a4.2, chr16:169818-174075]
   ignore_nondup: false
   config:
-   dp_norm: 1.12
+   dp_norm: 1.0  # direct k(r)
+   dp_norm_liftover: 1.1402  # collapsed u(r), fit on 278 HPRC/1000G Illumina samples
   map: data/hg38/HBA.dat
 IKBKG:
   gene_strand: "+"
@@ -364,6 +369,7 @@ CYP2B6:
   config:
     # CN model is categorical (cn_priors below); the intergenic variable is bidirectional so it admits
     # both the *29 deletion (CN 1) and the *30 duplication (CN 3). Bodies stay near CN=2 (low burden).
+    dp_norm_liftover: 0.9164  # collapsed u(r), fit on 278 HPRC/1000G Illumina samples
     cn_priors:
       CYP2B6:            {0: 0.0005, 1: 0.002, 2: 0.995, 3: 0.002,  4: 0.0005}  # conserved functional gene
       CYP2B7P:           {0: 0.002,  1: 0.01,  2: 0.982, 3: 0.004,  4: 0.002}   # pseudogene (rare dup, e.g. HG02622)
@@ -458,6 +464,7 @@ RH:
                                        # exons (many PSVs); precise minimal-conversion/antigen typing is the
                                        # deferred v2 layer. See docs/DEV_HANDBOOK cohort conversion analysis.
   config:
+    dp_norm_liftover: 1.0521  # collapsed u(r), fit on 278 HPRC/1000G Illumina samples
     cn_priors:
       # RHD deletion is COMMON (RhD-negative; ~40% deletion allele freq in Europeans),
       # so the prior is permissive across CN 0/1/2 (patterned on CFH's CFHR31), unlike
@@ -544,8 +551,8 @@ LPA:                                  # Lp(a) KIV-2 VNTR — no paralog. Standal
     kiv2_unit: chr6:160612109-160617655    # single 5547bp unit = collapse target + marker frame
     flank_regions: chr6:160607000-160611000,chr6:160647500-160651500  # unique L+R flanks = CN2 baseline
     ref_copies: 6
-    dp_norm: 1.093                     # collapse block-depth-inflation correction: N = 2*(unit_dp/flank_dp)/dp_norm.
-                                       # calibrated vs assembly truth, 38 samples: total r=0.984 (33/38 within 2), cf. STRC 1.08.
+    dp_norm: 0.992                     # N = 2*(unit_dp/flank_dp)/dp_norm, both depths dup-inclusive.
+                                       # calibrated vs assembly truth, 183 samples: r=0.983, 90.2% within 2, 100% within 4.
     # allele split: reference-allele-pair deconvolution over a 50-marker unit panel.
     catalog_file: data/hg38/LPA_kiv2_catalog.npz  # build-independent library (POS, ALT, allele-vectors)
     min_marker_depth: 20               # per-marker min collapsed depth to use a position

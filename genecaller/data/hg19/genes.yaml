@@ -21,6 +21,7 @@ CFH:
     - chr1:196880614-196883303,chr1:196883677-196903557,chr1:196903558-196908029,chr1:196910161-196917933,chr1:196796320-196801319
   map: data/hg19/CFHA_CFHB.dat
   config:
+    dp_norm_liftover: 0.9463  # collapsed u(r), fit on 278 HPRC/1000G Illumina samples
     cn_priors:
       CFH: {0: 0.0005, 1: 0.0005, 2: 0.998, 3: 0.0005, 4: 0.0005}  # Very conserved
       CFHR31: {0: 0.19, 1: 0.3, 2: 0.5, 3: 0.005, 4: 0.005}      # Het del most common, hom del next
@@ -85,7 +86,8 @@ STRC:
   - [CATSPER2, chr15:43920701-43960316]
   map: data/hg19/STRC_STRCP1.dat
   config:
-    dp_norm: 1.08                     # corrects the ~11% paralogous STRC/STRCP1 block depth inflation
+    dp_norm: 1.0  # direct k(r)
+    dp_norm_liftover: 1.0546  # collapsed u(r), fit on 278 HPRC/1000G Illumina samples
                                       # (cohort median block CN 4.45 vs 4.0); gentler than the segdup
                                       # neighbours (RCCX/HBA/IKBKG 1.1-1.15) to spare the unique CATSPER2.
                                       # 248-cohort validated vs assembly truth: fixes 2 benign gain FPs,
@@ -124,6 +126,7 @@ CYP2D6:
     three_prime_terminus: 42522501
     five_prime_terminus: 42526867
   config:
+    dp_norm_liftover: 1.1454  # collapsed u(r), fit on 278 HPRC/1000G Illumina samples
     prior_type: gamma        # Allows asymmetric distribution
     gamma_shape: 3.0         # Shape parameter (α)
     gamma_scale: 0.67        # Scale parameter (β), mean = α×β = 2.0
@@ -153,6 +156,7 @@ GBA:
     three_prime_terminus: 155204243
     fusion_detection: true
   config:
+    dp_norm_liftover: 1.0842  # collapsed u(r), fit on 278 HPRC/1000G Illumina samples
     cn_priors:
       GBA1: {0: 0.0005, 1: 0.001, 2: 0.9975, 3: 0.0005, 4: 0.0005}   # Highly conserved
       GBAP1: {0: 0.05, 1: 0.20, 2: 0.74, 3: 0.005, 4: 0.005}        # Deletion-prone pseudogene
@@ -173,7 +177,8 @@ HBA:
    - [a4.2, chr16:219817-224074]
   ignore_nondup: false
   config:
-   dp_norm: 1.12
+   dp_norm: 1.0  # direct k(r)
+   dp_norm_liftover: 1.1402  # collapsed u(r), fit on 278 HPRC/1000G Illumina samples
   map: data/hg19/HBA.dat
 IKBKG:
   gene_strand: "+"
@@ -340,6 +345,7 @@ CYP2B6:
   config:
     # CN model is categorical (cn_priors below); the intergenic variable is bidirectional so it admits
     # both the *29 deletion (CN 1) and the *30 duplication (CN 3). Bodies stay near CN=2 (low burden).
+    dp_norm_liftover: 0.9164  # collapsed u(r), fit on 278 HPRC/1000G Illumina samples
     cn_priors:
       CYP2B6:            {0: 0.0005, 1: 0.002, 2: 0.995, 3: 0.002,  4: 0.0005}  # conserved functional gene
       CYP2B7P:           {0: 0.002,  1: 0.01,  2: 0.982, 3: 0.004,  4: 0.002}   # pseudogene (rare dup)
@@ -375,6 +381,7 @@ RH:
     fusion_detection: false            # inverted pair does not form simple terminal fusions (cf. IKBKG)
     min_num_signals: 5                 # ~97% identity => suppress short normal RHCE-like tracts (see hg38)
   config:
+    dp_norm_liftover: 1.0521  # collapsed u(r), fit on 278 HPRC/1000G Illumina samples
     cn_priors:
       RHD:  {0: 0.15, 1: 0.35, 2: 0.48, 3: 0.01, 4: 0.01}
       RHCE: {0: 0.0005, 1: 0.001, 2: 0.9975, 3: 0.0005, 4: 0.0005}   # conserved
@@ -460,7 +467,7 @@ LPA:                                  # Lp(a) KIV-2 VNTR — no paralog. Standal
     kiv2_unit: chr6:161033141-161038687    # single 5547bp unit = collapse target + marker frame (5547M vs hg38)
     flank_regions: chr6:161028049-161032019,chr6:161068750-161072500  # unique L+R flanks = CN2 baseline
     ref_copies: 7
-    dp_norm: 1.093
+    dp_norm: 0.992                    # dup-inclusive convention (see hg38 note)
     catalog_file: data/hg19/LPA_kiv2_catalog.npz  # build-independent unit-local library
     min_marker_depth: 20
     min_markers: 8

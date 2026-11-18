@@ -110,6 +110,7 @@ class LPA(Gene):
             out_bam=collapsed_fname,
             gene_mapping=None,
             failed_margin=0,
+            exclude_dups=False,  # ratio counts dups on both sides; see _dup_inclusive_flank
         )
         collapsed = Bam(collapsed_fname, src_bam.ref, lo_params)
 
@@ -118,7 +119,8 @@ class LPA(Gene):
         # normalize against, so CNVscope emits no windows for it. Raw unit/flank coverage
         # is the validated primitive (Probe #1/#2) and both are on the same scale.
         unit_dp = self._raw_depth(src_bam, collapsed_fname, self.kiv2_unit, "lpa.unit")
-        flank_dp = self._raw_depth(src_bam, src_bam.bam, self.flank_regions, "lpa.flank")
+        flank_bam = self._dup_inclusive_flank(src_bam)
+        flank_dp = self._raw_depth(src_bam, flank_bam, self.flank_regions, "lpa.flank")
         ratio = (unit_dp / flank_dp) if flank_dp else 0.0
         # The flank is the diploid (2-copy) baseline; the collapsed unit carries all N
         # haploid KIV-2 copies -> N = 2 * ratio. dp_norm corrects the collapse's block
@@ -147,6 +149,23 @@ class LPA(Gene):
             "markers": marker_detail,
             "split_diag": self._split_diag,
         }
+
+    def _dup_inclusive_flank(self, ref_bam: Bam) -> str:
+        """Flank slice with 0x400 cleared: the unit keeps its dups, so the flank must count them too."""
+        import os
+        import pysam
+
+        out = os.path.join(
+            ref_bam.tmpdir, os.path.basename(ref_bam.bam) + ".lpa.flank_alldup.bam"
+        )
+        ref_bam.init_bamh()
+        with pysam.AlignmentFile(out, "wb", template=ref_bam.bamh) as w:
+            for reg in self.flank_regions.split(","):
+                for r in ref_bam.bamh.fetch(region=reg):
+                    r.flag &= ~0x400
+                    w.write(r)
+        pysam.index(out)
+        return out
 
     def _raw_depth(self, ref_bam: Bam, bam_path: str, regions: str, tag: str) -> float:
         """Length-weighted mean RAW coverage (MAPQ0) over `regions` via CoverageMetrics.

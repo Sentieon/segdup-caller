@@ -366,6 +366,7 @@ class Bam:
         crop_first: bool = False,
         min_ratio: float = 0.3,
         failed_margin: int = 100,
+        exclude_dups: bool = True,
     ) -> Dict[str, str]:
         out_prefix = out_bam[:-5] if out_bam.endswith(".cram") else out_bam[:-4]
         ext = ".cram" if out_bam.endswith(".cram") else ".bam"
@@ -403,7 +404,9 @@ class Bam:
             # ]
             # sq = "\n".join(sq_field)
             regions_arg = "" if crop_first else extract
-            cmd = f"{self.samtools} view -F 0x100 -F 0x200 -F 0x800 -h --reference {self.ref} {input_bam} {regions_arg} |"
+            # samtools fastq destroys FLAG bits, so dup-marked reads must be dropped here; LPA opts out
+            dup_filter = "-F 0x400 " if exclude_dups else ""
+            cmd = f"{self.samtools} view -F 0x100 -F 0x200 -F 0x800 {dup_filter}-h --reference {self.ref} {input_bam} {regions_arg} |"
             cmd += f"{self.samtools} fastq -t |"
             cmd += f'{self.sentieon} minimap2 -y -a -x {x} -R "{rg}" {realign_ref} /dev/stdin |'
             cmd += f"{self.sentieon} util sort -o {liftover_tmp_bam} --sam2bam -i -"
