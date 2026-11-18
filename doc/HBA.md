@@ -16,7 +16,7 @@ The HBA gene cluster on chromosome 16p13.3 (chr16:169,454-177,522) contains two 
 
 The HBA module performs:
 
-- **Copy number calling**: Determines copy numbers for three regions (-α3.7, -α4.2, non-duplication) to detect both common small deletions and rare large deletions. Validated at 100% accuracy on 215 HPRC v2.0 samples (645/645 CN calls concordant across all 3 regions).
+- **Copy number calling**: Determines copy numbers for three regions (-α3.7, -α4.2, non-duplication) to detect both common small deletions and rare large deletions. Validated against assembly truth on 222 HPRC samples: 661 of 666 region CN calls concordant (99.2%), 219 of 222 samples concordant in all 3 regions.
 - **Small variant calling**: Calls variants in HBA1/HBA2 using liftover to resolve the ~97% identical tandem duplication.
 
 ## HBA Gene Cluster Structure
@@ -154,7 +154,9 @@ HBA uses the default **Gaussian priors** centered at CN=2.
 
 ### Depth Normalization Factor
 
-HBA analysis uses a **depth normalization factor of 1.12** to account for the tandem duplication structure and improve CN estimation accuracy.
+HBA uses two depth normalization constants:
+- `dp_norm` = **1.0** for the direct (per-copy) probes;
+- `dp_norm_liftover` = **1.1402** for the collapsed HBA1+HBA2 frame, which pools reads from both tandem copies.
 
 ### Copy Number State Detection
 
@@ -162,41 +164,44 @@ The caller determines CN state (0, 1, 2, 3, 4) for each of the three regions usi
 
 ## Validation Results
 
-### HPRC v2.0 Benchmark
+### HPRC Benchmark
 
-Validated on **215 diverse samples** from HPRC v2.0 with truth CN calls derived from assemblies. For this validation, we only used Illumina short reads downloaded from s3://human-pangenomics/
+Validated on **222 HPRC samples** against copy numbers counted from each sample's phased assemblies across the alpha-globin cluster. The caller runs on the samples' Illumina 30× short reads (1000 Genomes high-coverage alignments).
 
 | Metric | Value |
 |--------|-------|
-| **Total samples** | 215 |
-| **Total CN calls** | 645 (215 samples × 3 regions) |
-| **Concordant calls** | 645 |
-| **Discrepancies** | 0 |
-| **Accuracy** | **100%** (0% discordance rate) |
+| **Total samples** | 222 |
+| **Total CN calls** | 666 (222 samples × 3 regions) |
+| **Concordant calls** | 661 |
+| **Discrepancies** | 5, in 3 samples |
+| **Accuracy** | **99.2%** (219/222 samples concordant in all 3 regions) |
 
 ### Performance by Region
 
 | Region | Total Calls | Discrepancies | Accuracy |
 |--------|-------------|---------------|----------|
-| **-α3.7** | 215 | 0 | 100% |
-| **-α4.2** | 215 | 0 | 100% |
-| **non-duplication** | 215 | 0 | 100% |
+| **-α3.7** | 222 | 1 | 99.5% |
+| **-α4.2** | 222 | 3 | 98.6% |
+| **non-duplication** | 222 | 1 | 99.5% |
 
-**CN distribution in HPRC v2.0**:
+The three discordant samples:
+- **HG03209:** truth −α3.7/−α3.7; the caller gives -α3.7 1, -α4.2 3, non-duplication 1, a complex call.
+- **HG02040:** -α4.2 called 1 against truth 2.
+- **HG02738:** -α4.2 called 1 against truth 2 (see Known Limitations).
+
+**CN distribution in the assembly truth (222 samples)**:
 
 | CN State | -α3.7 | -α4.2 | non-dup |
 |----------|-------|-------|---------|
-| CN=0 | 10 (4.7%) | 1 (0.5%) | 0 (0%) |
-| CN=1 | 45 (20.9%) | 7 (3.3%) | 0 (0%) |
-| CN=2 | 160 (74.4%) | 207 (96.3%) | 215 (100%) |
-| CN=3 | 0 (0%) | 0 (0%) | 0 (0%) |
-| CN=4 | 0 (0%) | 0 (0%) | 0 (0%) |
+| CN=0 | 2 (0.9%) | 0 (0%) | 0 (0%) |
+| CN=1 | 22 (9.9%) | 1 (0.5%) | 0 (0%) |
+| CN=2 | 193 (86.9%) | 220 (99.1%) | 222 (100%) |
+| CN=3 | 5 (2.3%) | 1 (0.5%) | 0 (0%) |
 
 **Key findings**:
-- **Perfect concordance** across all 645 copy number calls
-- **Common -α3.7 deletions** successfully detected (25.6% combined CN=0+CN=1)
-- **Rare -α4.2 deletions** successfully detected (3.8% combined CN=0+CN=1)
-- **Non-duplication region** perfectly stable (100% CN=2), validating large deletion detection approach
+- **-α3.7 deletions and triplications** are called correctly in every sample but one: 24 deletion carriers and 5 triplication carriers in the truth.
+- **-α4.2** is the hardest region: 219 of 222 are concordant, and two of the three discrepancies are false heterozygous deletions.
+- **Non-duplication region** is CN=2 in every truth sample; the caller agrees in 221 of 222.
 
 ## Known Limitations
 
@@ -204,6 +209,9 @@ Validated on **215 diverse samples** from HPRC v2.0 with truth CN calls derived 
 - **Complex rearrangements**: Unusual rearrangements (e.g., HBA1/HBA2 gene conversion, anti-Lepore variants) may need additional analysis
 - **Duplication phasing**: For triplications (CN=3), specific gene assignment may be ambiguous
 - **Non-deletion α-thalassemia**: Rare non-deletion mutations (e.g., Constant Spring, Hb Quong Sze) require small variant analysis
+- **Very high duplicate rates**: In HG02738, the cohort's most duplicate-heavy library (18% duplicate-flagged reads), the caller calls a false heterozygous −α4.2 deletion; the assembly is normal.
+  - With duplicate-flagged reads excluded, the collapsed HBA2 depth is 1.71, just below the midpoint between the 4-copy (≈2.0) and 3-copy (≈1.5) levels.
+  - A −α4.2 call on a library with a very high duplicate rate should be confirmed orthogonally.
 
 ## HBA-Specific Resources
 

@@ -243,9 +243,11 @@ Specialized HMM transition rates:
 **Note**: CYP2D6 validation is ongoing with limited samples to date.
 
 ### Current Validation
-- Copy number calling: High concordance with orthogonal methods (qPCR, MLPA) in preliminary testing
+- Copy number calling on HPRC assembly truth (Illumina 30× short reads):
+  - total CYP2D6 + CYP2D7 copy number matches in 188 of 188 samples (100%);
+  - the CYP2D6/CYP2D7 split matches in 183 of 183 samples with paralog-resolved truth (100%).
 - Structural variant detection: Successfully detects *13, *36, *68 hybrid alleles
-- Star allele calling: Concordance with reference methods being evaluated
+- Star allele calling: Concordance with reference methods being evaluated. There is no star-level assembly truth yet.
 
 ### Reference Materials
 - GeT-RM (Genetic Testing Reference Materials) characterized samples
@@ -257,6 +259,11 @@ Specialized HMM transition rates:
 - **Novel variants**: Variants not in PharmVar database will not receive star allele designation
 - **Duplication phasing**: Specific allele-to-copy assignment ambiguous for CN≥3 without long-read data
 - **Rare structural variants**: Some complex SVs may not be fully characterized
+- **Extra gene copies on other library preps**: The collapsed-frame depth calibration is fitted on HPRC/NYGC Illumina data. On data from other library preps the caller can miss an extra gene copy that the same person's other datasets show.
+  - In 20 datasets of 7 people from other sources (GIAB 30× Illumina, Roche, NovaSeq X and two PCR-positive NA12878 libraries), a copy is missed in 3: a CYP2D6 duplication on GIAB 30× HG004 and on Roche HG007, and a *68 hybrid on the NA12878 DNAnexus PCR-positive library (called *36/*3; the person's other datasets give *68/*3/*4).
+  - Example: HG004's GIAB 30× data are called *2/*2 (normal metabolizer), while its NovaSeq X and Roche data are called with a third copy (*2/*2/*2, ultrarapid).
+  - The GIAB trio cannot settle it: the child received HG004's single-copy haplotype, so the duplication is not testable from the child.
+  - Treat a normal-metabolizer call on data from another library prep with caution when a duplication is clinically relevant.
 
 ## CYP2D6-Specific Resources
 

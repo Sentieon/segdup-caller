@@ -15,8 +15,8 @@ GBA (glucocerebrosidase) is a critical lysosomal enzyme gene associated with Gau
 
 The GBA module performs:
 
-- **Copy number calling**: Determines copy numbers for GBA1 and GBAP1 regions. Validated at 100% accuracy on HPRC v1.0 samples.
-- **Gene conversion detection**: Identifies RecNciI, RecTL, and individual conversion variants (L483P, A495P, D409H, c.1263del) via HMM-based segmentation. Validated at 100% concordance against Tayebi et al. (2025) on 1000 Genomes high-coverage samples.
+- **Copy number calling**: Determines copy numbers for GBA1 and GBAP1 regions. There is no assembly truth for GBA1/GBAP1 copy number yet.
+- **Gene conversion detection**: Identifies RecNciI, RecTL, and individual conversion variants (L483P, A495P, D409H (legacy name of D448H), c.1263del) via HMM-based segmentation. Compared with Tayebi et al. (2025) on 11 1000 Genomes high-coverage samples: A495P, RecTL, N409S and c.115+1G>A are found as in the study; L483P and c.1263del are each missed in one sample; one RecNciI is reported as an unnamed GBA1::GBAP1 fusion (see [1000 Genomes Validation](#1000-genomes-validation)).
 - **Fusion allele detection**: Detects GBA1::GBAP1 fusion events where recombination extends to the 3' gene terminus.
 - **Small variant calling**: Calls variants in the GBA1/GBAP1 locus using liftover and phasing.
 
@@ -37,7 +37,7 @@ This region is a hotspot for homologous recombination that transfers GBAP1 seque
 
 ## Common Gene Conversion Events
 
-> **Nomenclature note**: This document uses HGVS standard nomenclature. Legacy names still common in literature: L444P → L483P, N370S → N409S, D409H → D448H, A495P → A534P (39-residue signal peptide difference).
+> **Nomenclature note**: This document uses HGVS protein names, which count the 39-residue signal peptide. The one exception is D409H, a legacy name (HGVS D448H), which this page marks "(legacy)" because the caller reports it under that name. Legacy names still common in the literature: L444P → L483P, N370S → N409S, A456P → A495P, V460V → V499V, D409H → D448H.
 
 ### RecNciI (RecTL-NciI)
 
@@ -58,8 +58,8 @@ This region is a hotspot for homologous recombination that transfers GBAP1 seque
 **Structure**: Larger conversion event spanning exons 9-11
 
 **Signature variants**:
-- c.1263del (84GG deletion): Frameshift
-- D409H (c.1226A>C): Pathogenic missense
+- c.1263del (55-bp deletion, c.1263_1317del): Frameshift
+- D409H (legacy; HGVS D448H, c.1342G>C): Pathogenic missense
 - L483P (c.1448T>C): Pathogenic missense
 - A495P (c.1483G>C): Pathogenic missense
 - V499V (c.1497G>C): Synonymous
@@ -73,8 +73,8 @@ This region is a hotspot for homologous recombination that transfers GBAP1 seque
 
 | Variant | Type | Clinical Significance |
 |---------|------|----------------------|
-| **c.1263del** | 84GG deletion (~55 bp frameshift) | Gaucher disease; can occur alone or as part of RecTL |
-| **D409H** | Missense | Gaucher disease; isolated conversion or part of RecTL |
+| **c.1263del** | 55-bp deletion (c.1263_1317del), frameshift | Gaucher disease; can occur alone or as part of RecTL |
+| **D409H** (legacy) | Missense | Gaucher disease; isolated conversion or part of RecTL |
 | **L483P** | Missense | Gaucher disease; isolated conversion or part of RecNciI/RecTL |
 | **A495P** | Missense | Rare isolated conversion; part of RecNciI/RecTL |
 | **V499V** | Synonymous | Usually part of larger RecNciI event |
@@ -186,12 +186,12 @@ GBA1:
 |------------|-----------|---------|----------------------|
 | CONVERSION | RecNciI (L483P+A495P+V499V) | 1 | Gaucher carrier; PD risk factor |
 | CONVERSION | RecNciI (L483P+A495P+V499V) | 2 | Gaucher type 1; high PD risk |
-| CONVERSION | RecTL (c.1263del+D409H+L483P+A495P+V499V) | 1 | Gaucher carrier; PD risk factor |
-| CONVERSION | RecTL (c.1263del+D409H+L483P+A495P+V499V) | 2 | Gaucher type 1; high PD risk |
+| CONVERSION | RecTL (c.1263del+D409H (legacy)+L483P+A495P+V499V) | 1 | Gaucher carrier; PD risk factor |
+| CONVERSION | RecTL (c.1263del+D409H (legacy)+L483P+A495P+V499V) | 2 | Gaucher type 1; high PD risk |
 | CONVERSION | c.1263del only | 1 | Gaucher carrier (frameshift) |
 | CONVERSION | c.1263del only | 2 | Gaucher disease |
-| CONVERSION | D409H only | 1 | Gaucher carrier; PD risk |
-| CONVERSION | D409H only | 2 | Gaucher type 1; high PD risk |
+| CONVERSION | D409H (legacy) only | 1 | Gaucher carrier; PD risk |
+| CONVERSION | D409H (legacy) only | 2 | Gaucher type 1; high PD risk |
 | CONVERSION | L483P only | 1 | Gaucher carrier; PD risk |
 | CONVERSION | L483P only | 2 | Gaucher type 1; high PD risk |
 | FUSION | GBA1::GBAP1_Fusion | 1 | Gaucher carrier; potential PD risk |
@@ -232,34 +232,36 @@ HMM statistical segmentation:
 
 Validated against **Tayebi et al. (2025)** findings on 1000 Genomes high-coverage samples. For this validation, we only used Illumina short reads downloaded from s3://human-pangenomics/ or from 1000-genome data repository. 
 
-| Sample | Coverage | Total CN | Detected Event | Complete Genotype | Concordance |
-|--------|----------|----------|----------------|-------------------|-------------|
-| **CN Loss (GBA1 Intact)** | | | | | |
-| NA21133 | 1000G High | 3 | - | WT,WT | ✓ |
-| NA21099 | 1000G High | 3 | - | WT,WT | ✓ |
-| NA19922 | 1000G High | 3 | - | WT,WT | ✓ |
-| **Monoallelic Conversion** | | | | | |
-| HG02615 | 1000G High | 4 | A495P | A495P,WT | ✓ |
-| NA20815 | 1000G High | 4 | L483P | L483P,WT | ✓ |
-| HG02439 | 1000G High | 4 | c.1263del | c.1263del,WT | ✓ |
-| **Specific Recombinants** | | | | | |
-| HG00422 | 1000G High | 3 | RecNciI | RecNciI,WT | ✓ |
-| HG00119 | 1000G High | 4 | RecTL | RecTL,WT | ✓ |
-| HG00115 | 1000G High | 4 | RecTL | RecTL,WT | ✓ |
-| **Other (Heterozygous SNV)** | | | | | |
-| NA20503 | 1000G High | 4 | - | N409S,WT | ✓ |
-| HG02514 | 1000G High | 4 | - | c.115+1G>A,WT | ✓ |
+The study column gives each sample's finding from Tayebi et al.; the caller columns give what the caller reports on the 1000 Genomes high-coverage short reads.
+
+| Sample | Study finding (Tayebi et al. 2025) | Caller total CN (GBA1 / GBAP1) | Caller-reported event | Agreement |
+|--------|------------------------------------|--------------------------------|---------------------------------|-----------|
+| **CN Loss (GBA1 Intact)** | | | | |
+| NA21133 | CN loss, GBA1 intact; WT,WT | 3 (2 / 1) | GBA1::GBAP1 fusion (position-based match) | CN loss agrees; the caller also reports a fusion |
+| NA21099 | CN loss, GBA1 intact; WT,WT | 3 (2 / 1) | none | agrees |
+| NA19922 | CN loss, GBA1 intact; WT,WT | 3 (2 / 1) | mono-allelic rs708606 (possible GBAP1→GBA1 conversion) | CN loss agrees; the caller also flags rs708606 |
+| **Monoallelic Conversion** | | | | |
+| HG02615 | A495P,WT | 4 (2 / 2) | mono-allelic A495P (possible GBAP1→GBA1 conversion) | agrees |
+| NA20815 | L483P,WT | 4 (2 / 2) | mono-allelic rs708606; L483P not called | L483P missed |
+| HG02439 | c.1263del,WT | 4 (2 / 2) | none; c.1263del not called | c.1263del missed |
+| **Specific Recombinants** | | | | |
+| HG00422 | RecNciI,WT | 3 (2 / 1) | GBA1::GBAP1 fusion (position-based match); mono-allelic rs708606 | reported as a fusion, not named RecNciI |
+| HG00119 | RecTL,WT | 4 (2 / 2) | RecTL (match score 80%, c.1263del not matched); bi-allelic rs708606 | agrees |
+| HG00115 | RecTL,WT | 4 (2 / 2) | RecTL (match score 80%, c.1263del not matched); bi-allelic rs708606 | agrees |
+| **Other (Heterozygous SNV)** | | | | |
+| NA20503 | N409S,WT | 4 (2 / 2) | heterozygous chr1:155,235,843 T>C (N409S; no VCF name) | agrees; SNV called without a name |
+| HG02514 | c.115+1G>A,WT | 4 (2 / 2) | heterozygous chr1:155,240,629 C>T (c.115+1G>A; VCF ID 155240628_C_T) | agrees; SNV called without a name |
 
 **Key findings**:
-- **100% concordance** with published validation data
-- **CN Loss samples**: Correctly identified GBAP1 heterozygous deletion (Total CN=3, GBA1=2, GBAP1=1)
-- **Monoallelic conversions**: Successfully detected L483P, A495P, c.1263del
-- **Recombinant alleles**: Correctly identified RecNciI and RecTL events
-- **Non-conversion SNVs**: Properly distinguished from gene conversions
+- **Copy number:** the three samples the study lists as CN loss read total 3 (GBA1 2, GBAP1 1). HG00422 also reads total 3, and the other seven read 4.
+- **Named as in the study:** A495P (HG02615) and RecTL (HG00119, HG00115).
+- **Called without a name:** N409S (NA20503) and c.115+1G>A (HG02514) are heterozygous SNVs in the VCF.
+- **Not reproduced:** L483P (NA20815) and c.1263del (HG02439) are not called. HG00422's RecNciI is reported as a position-based GBA1::GBAP1 fusion, without the RecNciI name.
+- **Also reported:** a fusion in NA21133 and a possible conversion at rs708606 in NA19922. The study lists neither.
 
 ### HPRC Validation
 
-100% accuracy for GBA1 and GBAP1 copy number calls on **HPRC v1.0 release samples**.
+There is no assembly truth for GBA1/GBAP1 copy number yet.
 
 ## Known Limitations
 

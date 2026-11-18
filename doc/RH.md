@@ -151,38 +151,48 @@ RH:
 
 ## Validation
 
-Validated on a 226-sample HPRC cohort (GRCh38) using assembly-based truth, plus the GIAB
-trio for small-variant accuracy.
+Validated against HPRC assembly truth (223 samples with copy-number truth); antigen typing on
+278 samples; small variants on the GIAB trio.
 
 Copy number is the primary output:
 
 | metric | result |
 |---|---|
-| RHD copy number, exact | 222 / 223 (99.6%) |
-| RHCE copy number, exact | 222 / 223 (99.6%) |
-| RhD-negative (RHD CN0) detection | sensitivity and specificity 1.00 |
+| RHD copy number, exact | 219 / 219 (100%) with paralog-resolved truth |
+| RHCE copy number, exact | 219 / 219 (100%) with paralog-resolved truth |
+| RHD + RHCE total copy number | 223 / 223 (100%), including 4 samples with total-only truth |
+| RhD-negative (RHD CN0) detection | 12 of 12 detected, 0 false calls (sensitivity and specificity 1.00) |
 
 The cohort carries real RHD copy-number variation — 12 homozygous deletions, 59 hemizygous
 samples, and one RHD triplication — so both deletion and duplication detection are genuinely
 tested, not just specificity.
 
 Small variants (GIAB trio, curated truth): with the population short-read model, RHD
-SNV/indel calling is strong — F1 ≈ 0.95–0.97 at high precision (HG002, HG003). The result
-is cross-platform: Ultima short reads reproduce the same RHD/RHCE copy number and RhD
-zygosity and reach RHD F1 ≈ 0.92 (SNVs ≈ 0.93–0.95), with a modest indel-recall gap
-consistent with the platform. RHCE calls the well-mappable fraction well (F1 ≈ 0.90) but is
+SNV/indel calling is strong — F1 ≈ 0.95–0.97 at high precision (HG002, HG003). RHCE calls
+the well-mappable fraction well (F1 ≈ 0.90) but is
 incomplete over the most divergent part of the RHCE gene body; complete RHCE genotyping,
 and with it C/c typing, is therefore limited.
 
-Antigen typing: across the 226 samples the weak-D and DEL call rate matches population
-expectation — 3 weak-D and 1 DEL carrier, with no evidence of over-calling — and the RhCE
-E-positive frequency of 27% matches the expected population frequency. These are
-consistency checks; the antigen calls have not been validated against serology.
+Antigen typing across the 278-sample HPRC cohort:
+
+| call | result |
+|---|---|
+| weak D, among samples with an RHD copy | 6 of 264: type 3 (HG00284, HG01981), type 154 (HG03652, HG03784), type 10 (NA20346), type 41.0.1 (NA21133) |
+| DEL, among samples with an RHD copy | 1 of 264: RHD\*01EL.01, the Asian-type DEL c.1227G>A (NA18945) |
+| RhCE E-positive | 76 of 278 (27.3%): 67 Ee, 9 EE |
+
+- Every weak-D and DEL call is heterozygous. NA21133 has a single RHD copy, so its weak-D
+  allele is the only RHD it has, and the caller reports reduced D with a caution. The other
+  carriers have a second RHD copy, and the caller reports them as carriers.
+- These are consistency checks. We have no serology for these samples, so the antigen calls
+  are not validated.
 
 Gene conversion is reported but preliminary. Because RHD and RHCE are ~97% identical, the
 detector over-calls short normal tracts; it is tuned for specificity and is not
 benchmarked against hybrid truth. Treat conversion output and partial-D flags as
-candidates.
+candidates. On the 278-sample HPRC cohort, the "RHD-CE-D hybrid (partial-D) candidate" note
+appears for 223 of 278 samples. The note's high rate is a property of the tract detector, not a
+phenotype call.
 
 Cross-build: the RHD and RHCE reference sequences are identical between GRCh38 and GRCh37,
 so the hg19 and b37 results reproduce the hg38 result.

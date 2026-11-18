@@ -12,7 +12,8 @@ Unlike the other segdup-caller genes, LPA has no pseudogene/paralog — the clin
 count of a within-gene VNTR, not a gene-vs-paralog copy-number split. GRCh38 (and GRCh37) collapse
 the array to 6 reference copies (`chr6:160,611,568-160,646,868` in hg38), so short reads over the
 array multi-map and are discarded by ordinary genotyping. This module recovers the count by
-collapsing the whole array onto a single unit.
+collapsing the whole array onto a single unit and comparing its depth with the unique flanks;
+duplicate-flagged reads count on both sides of that ratio.
 
 This is a research-use-only (RUO), qualitative Lp(a)/ASCVD association; the module reports KIV-2
 copy number, not a quantitative Lp(a) concentration.
@@ -40,18 +41,18 @@ copy number, not a quantitative Lp(a) concentration.
 ```yaml
 LPA:
   Copy numbers:
-    LPA_KIV2_total: 42
     LPA_KIV2_allele1: 22
-    LPA_KIV2_allele2: 20
+    LPA_KIV2_allele2: 19
+    LPA_KIV2_total: 41
   interpretation: |-
     LPA (Lp(a) / KIV-2 VNTR) analysis:
-      KIV-2 total copies (both alleles): 42
-      allele split: 22 + 20 copies
+      KIV-2 total copies (both alleles): 41
+      allele split: 22 + 19 copies
       (smaller allele drives plasma Lp(a): fewer KIV-2 copies -> higher Lp(a) -> higher ASCVD risk)
       Qualitative Lp(a)/ASCVD association only (RUO); no quantitative Lp(a) value.
 ```
 
-### Total-only, split not resolvable (HPRC sample HG02523)
+### Total-only, split not resolvable (HPRC sample HG00276)
 
 The two alleles are too similar, or not represented in the reference library, so the module
 reports the total but abstains on the split:
@@ -59,10 +60,10 @@ reports the total but abstains on the split:
 ```yaml
 LPA:
   Copy numbers:
-    LPA_KIV2_total: 39
+    LPA_KIV2_total: 44
   interpretation: |-
     LPA (Lp(a) / KIV-2 VNTR) analysis:
-      KIV-2 total copies (both alleles): 39
+      KIV-2 total copies (both alleles): 44
       allele split: not resolvable (allele absent from reference library or subtype-homozygous)
       Qualitative Lp(a)/ASCVD association only (RUO); no quantitative Lp(a) value.
 ```
@@ -82,12 +83,12 @@ The KIV-2 array averages ~38 copies, so absolute copy errors are best read again
 |---|---|
 | mean copy count (truth) | 38.5 (range 16–57) |
 | median \|error\| | 1 copy |
-| mean \|error\| | 1.23 copies (3.2% of the mean count) |
-| max \|error\| | 7 copies |
+| mean \|error\| | 1.07 copies (2.8% of the mean count) |
+| max \|error\| | 4 copies |
 | within 2 copies of truth | 165/183 = 90.2% |
-| within 4 copies of truth | 180/183 = 98.4% |
+| within 4 copies of truth | 183/183 = 100% |
 
-(Pearson r = 0.977 vs truth; the copy-error distribution above is the more actionable view — a
+(Pearson r = 0.983 vs truth; the copy-error distribution above is the more actionable view — a
 "small" 3% mean error is still ~1 copy.) The total count is the primary Lp(a)/ASCVD determinant
 and is always reported.
 
@@ -100,17 +101,17 @@ total-only. Errors below are for the minor allele (the smaller count, which driv
 
 | metric | value |
 |---|---|
-| split reported (confident) | 99/181 = 54% |
-| mean minor-allele copy count (truth) | 16.4 (range 7–25) |
+| split reported (confident) | 128/181 = 70.7% |
+| mean minor-allele copy count (truth) | 16.5 (range 7–25) |
 | median \|error\| | 1 copy |
-| mean \|error\| | 1.45 copies |
-| max \|error\| | 10 copies |
-| within 2 copies of truth | 81/99 = 81.8% |
-| within 4 copies of truth | 97/99 = 98.0% |
+| mean \|error\| | 1.30 copies |
+| max \|error\| | 13 copies |
+| within 2 copies of truth | 112/128 = 87.5% |
+| within 4 copies of truth | 123/128 = 96.1% |
 | confident-but-wrong (leak) | 2/181 = 1.1% |
 
-The abstaining ~46% are subtype-homozygous or carry an allele absent from the reference library;
-the gate reports total-only for them rather than emit a confident wrong split. 
+The abstaining 29% (53/181) are subtype-homozygous or carry an allele absent from the reference
+library; the gate reports total-only for them rather than emit a confident wrong split.
 
 ### Cross-build reproducibility (hg38 / hg19 / b37)
 
@@ -119,39 +120,23 @@ references as `5547M` (100% identity, no indels), and the marker frame is preser
 The unit-local reference library is shared across builds unchanged; only the `kiv2_unit` genomic
 coordinate differs per build. hg19 collapses ~7 reference KIV-2 copies (hg38 has 6), which does not
 affect the copy-number estimate. Cross-build caller runs on GIAB agree: HG002 gives an identical
-total (30) and split (19 + 11) on hg38 and b37, and HG005 agrees within one copy (40 vs 41).
-
-### Platform concordance (Ultima)
-
-The caller was checked on Ultima Genomics reads (single-end, distinct error profile) by concordance
-with Illumina on GIAB HG002–HG005 (Illumina 30×, Ultima 40×, hg38). The depth-ratio estimator is
-self-normalizing, so the Illumina-calibrated `dp_norm` transfers unchanged despite Ultima's higher
-absolute depth.
-
-| sample | Illumina total | Ultima total | Illumina split | Ultima split |
-|---|---|---|---|---|
-| HG002 | 30 | 31 | 19 + 11 | 20 + 11 |
-| HG003 | 40 | 39 | total-only | total-only |
-| HG004 | 27 | 29 | 16 + 11 | 18 + 11 |
-| HG005 | 40 | 38 | total-only | 37 + 1 |
-
-The KIV-2 total agrees within 2 copies on all four samples with no systematic offset
-(Δ = +1, −1, +2, −2) — no worse than the method's own Illumina-vs-truth spread. The allele split
-agrees on the minor allele wherever both platforms split confidently (HG002 and HG004 both give
-minor = 11) and both abstain together on HG003. HG005 is a boundary case: Illumina abstains
-(total-only) while Ultima reports a confident 37 + 1, illustrating that the split — near-threshold
-for some samples — is more platform-sensitive than the total, which is why it is gated and secondary.
+total (33) and split (21 + 12) on hg38 and hg19.
 
 ### Scope and known limitations
 
 - RUO / qualitative. Reports KIV-2 copy number, not a quantitative Lp(a) concentration.
-- Allele split is not always resolvable. ~46% of samples are subtype-homozygous or carry an allele
-  absent from the reference library; these correctly report total-only. This is a property of pooled
-  short-read data, not a bug — the total count (the dominant risk determinant) is always reported.
+- Allele split is not always resolvable. About 29% of samples (leave-one-out) are subtype-homozygous
+  or carry an allele absent from the reference library; these correctly report total-only. This is a
+  property of pooled short-read data, not a bug — the total count (the dominant risk determinant) is
+  always reported.
 - Residual novel-allele leaks (~1.1%). A small fraction of samples whose true alleles are absent
   from the library can match a wrong library pair confidently; a fuller catalog reduces this.
-  Long-read input removes this failure mode (a HiFi read spans a full unit, so copies are genotyped
-  and clustered directly, without a reference library).
+  The caller does not use long reads for LPA. A HiFi read spans a full unit, so a long-read mode
+  could genotype and cluster the copies directly, without a reference library.
+- The total depends on the library preparation. Across 20 datasets of 7 GIAB people (GIAB 30×
+  Illumina, NovaSeq X, Roche and two PCR-positive NA12878 libraries), one person's totals differ by
+  up to 8 copies between preparations. NovaSeq X reads about 5% above the person's mean, and GIAB 30×
+  about 5% below. Compare totals from the same preparation.
 
 ## References
 
