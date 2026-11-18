@@ -15,7 +15,7 @@ no diff_vcf / map / GeneMapping. It reuses the framework's existing primitives:
       work on the collapsed pileup.
   (2) Total count = slope * (unit_depth / flank_depth), the unit depth read off the
       collapsed BAM with ``Bam.get_depth`` (MAPQ0), the flank the diploid CN2 baseline.
-      Validated r=0.994 vs HPRC assembly truth (docs/LPA_BUILD_PLAN.md Probe #2).
+      doc/LPA.md gives its accuracy against HPRC assembly truth.
   (3) Allele split = a reference-allele-pair deconvolution over a 50-marker unit
       panel. The pooled alt-fraction vector (read via ``Bam.get_pileup`` on the
       collapsed pileup) is the copy-count-weighted mixture of the two alleles'
@@ -117,7 +117,7 @@ class LPA(Gene):
         # (2) total count from the collapse depth ratio. RAW coverage (MAPQ0), NOT the
         # CNVscope-normalized get_depth: the collapsed BAM has no genome-wide coverage to
         # normalize against, so CNVscope emits no windows for it. Raw unit/flank coverage
-        # is the validated primitive (Probe #1/#2) and both are on the same scale.
+        # is the validated primitive and both are on the same scale.
         unit_dp = self._raw_depth(src_bam, collapsed_fname, self.kiv2_unit, "lpa.unit")
         flank_bam = self._dup_inclusive_flank(src_bam)
         flank_dp = self._raw_depth(src_bam, flank_bam, self.flank_regions, "lpa.flank")

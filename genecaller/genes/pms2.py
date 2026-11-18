@@ -34,7 +34,7 @@ class ConversionEvent:
 class PMS2(Gene):
     """PMS2 gene with block-based gene conversion interpretation.
 
-    See docs/PMS2.md for detailed documentation on block structure and classification.
+    See doc/PMS2.md for detailed documentation on block structure and classification.
     """
 
     # Block IDs (B3 is stable/rarely converts; B4 is active/frequently converts)
@@ -375,7 +375,7 @@ class PMS2(Gene):
         segments: List[GeneConversionSegment],
         direction: str,
     ) -> List[ConversionEvent]:
-        """Classify event type from block coverage. See docs/PMS2.md for details."""
+        """Classify event type from block coverage. See doc/PMS2.md for details."""
         if not segments:
             return []
 

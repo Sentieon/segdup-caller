@@ -461,8 +461,7 @@ RH:
                                        # require >=5 PSVs to call a conversion. Suppresses systematic hotspots
                                        # recurring across a healthy cohort (e.g. chr1:25315165-25315197 in 92%
                                        # of 226 samples, 2 PSVs). Real RHD-CE-D partial-D hybrids span multiple
-                                       # exons (many PSVs); precise minimal-conversion/antigen typing is the
-                                       # deferred v2 layer. See docs/DEV_HANDBOOK cohort conversion analysis.
+                                       # exons (many PSVs).
   config:
     dp_norm_liftover: 1.0521  # collapsed u(r), fit on 278 HPRC/1000G Illumina samples
     cn_priors:
@@ -538,8 +537,8 @@ LPA:                                  # Lp(a) KIV-2 VNTR — no paralog. Standal
                                       # estimator (genes/lpa.py), NOT the paralog CN solver.
                                       # Collapses the ~6 ref KIV-2 copies onto one unit via
                                       # liftover, counts by depth ratio, splits alleles by
-                                      # marker-panel AD. Validated r=0.994 (total) / r=0.981
-                                      # (copy-level AD) vs HPRC assembly (LPA_BUILD_PLAN §Probe 2).
+                                      # marker-panel AD. Validated against HPRC assembly
+                                      # truth (doc/LPA.md).
   gene_strand: "-"                    # LPA minus strand (unused by the estimator)
   gene_names:
   - LPA
