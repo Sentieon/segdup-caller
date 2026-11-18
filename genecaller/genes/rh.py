@@ -28,7 +28,7 @@ The inverted orientation is handled entirely by the base GeneMapping (reverse ma
 so this subclass carries NO orientation-specific logic (cf. genes/ikbkg.py).
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from genecaller.gene import Gene
 from genecaller.util import get_data_file
 from genecaller.genes.cyp2d6 import StarAlleleCaller
@@ -144,6 +144,11 @@ class RH(Gene):
     # the conservative caution message — a prefix match would wrongly catch "type 10".."19".
     _MANAGE_POSITIVE = ("weak D type 1", "weak D type 2", "weak D type 3")
 
+    def __init__(self, cfg: dict, ref_file: str, sex: Optional[str] = None) -> None:
+        super().__init__(cfg, ref_file, sex=sex)
+        # genes.yaml puts the antigen table at the RH section level, not in its config: block
+        self.star_allele_file = cfg.get("star_allele_file") or self.config.get("star_allele_file")
+
     @staticmethod
     def rhd_zygosity(rhd_cn: int) -> str:
         """Map RHD copy number to a predicted RhD zygosity statement."""
@@ -231,11 +236,12 @@ class RH(Gene):
         lines.append(f"  RHCE: CN={rhce_cn}")
         lines.append(f"  Predicted RhD zygosity: {self.rhd_zygosity(rhd_cn)}")
 
-        cfg = getattr(self, "config", None)
-        if cfg and cfg.get("star_allele_file"):
+        allele_file = getattr(self, "star_allele_file", None)
+        if allele_file:
             typed = None
             try:
-                caller = RHAntigenCaller(cfg, ref=getattr(self, "ref", None))
+                caller = RHAntigenCaller({"star_allele_file": allele_file},
+                                         ref=getattr(self, "ref", None))
                 typed = caller.call(result_data.get("Variants", ""))
             except Exception:
                 typed = None

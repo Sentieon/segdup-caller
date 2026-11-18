@@ -26,11 +26,11 @@ no diff_vcf / map / GeneMapping. It reuses the framework's existing primitives:
       -- few near-optimal pairs may disagree on the count (spread). This catches the
       novel-allele failure mode (a sample whose alleles are absent from the library
       matches a wrong pair at low residual, but with a wide spread) instead of emitting
-      a confident wrong split. ~54% of samples confidently split (86% of those within 2
-      copies of assembly truth; 1.1% leak) vs ~42% for single fixed markers; the rest
-      report total-only. Validated leave-one-out on 181 HPRC samples, the caller's own
-      collapse. (The confident fraction is honest, not maximal: a denser library finds more
-      plausible competing pairs and correctly abstains on genuinely ambiguous samples.)
+      a confident wrong split; the rest report total-only. doc/LPA.md gives how often the
+      split is confident and how close it comes to assembly truth, validated leave-one-out
+      on 181 HPRC samples with the caller's own collapse. (The confident fraction is honest,
+      not maximal: a denser library finds more plausible competing pairs and correctly
+      abstains on genuinely ambiguous samples.)
 
 No small variants are called (``skip_variant_call``); the acceptance gate is count
 concordance vs assembly truth, not F1.
@@ -359,7 +359,7 @@ class LPA(Gene):
         else:
             lines.append(
                 "  allele split: not resolvable (allele absent from reference library or "
-                "subtype-homozygous; ~46% of samples report total-only)"
+                "subtype-homozygous)"
             )
         lines.append(
             "  Qualitative Lp(a)/ASCVD association only (RUO); no quantitative Lp(a) value."
