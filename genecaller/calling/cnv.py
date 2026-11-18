@@ -2,12 +2,15 @@
 
 `call_cnvscope`, `call_depth`, and `trim_to_region_vcf` are pure helpers
 taking a Bam instance as a state-holder. `call_depth` mutates Bam's depth/
-segment caches as part of its caching contract.
+segment caches as part of its caching contract. `source_cnvscope` runs the
+source CNVscope of every chromosome once, before the genes start; `call_depth`
+then reads those outputs by path (`staged_run`).
 """
 
 import os
 import subprocess
-from typing import Any, Dict
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import vcflib
@@ -15,11 +18,15 @@ import vcflib
 from .. import throttle
 from ..util import IntervalList
 
+# output paths blanked: two runs with the same template are the same command
+_OUT, _NORM = "@CNV_OUT@", "@CNV_NORM@"
 
-def call_cnvscope(bam: Any, output: str, param: Dict[str, Any]) -> None:
-    if bam.use_existing and os.path.exists(output) and os.path.getsize(output):
-        return
-    driver_opt = param.get("driver_opt", "") + f" -i {bam.bam} -r {bam.ref}"
+
+def cnvscope_cmd(bam: Any, output: str, param: Dict[str, Any]) -> str:
+    # a lifted Bam may read several BAMs at once (cnv_inputs); an input Bam reads bam.bam
+    inputs = getattr(bam, "cnv_inputs", None) or [bam.bam]
+    driver_opt = param.get("driver_opt", "") + "".join(f" -i {p}" for p in inputs)
+    driver_opt += f" -r {bam.ref}"
     algo_opt = param.get("algo_opt", "")
     if "region" in param:
         driver_opt += f" --interval {param['region']}"
@@ -29,11 +36,81 @@ def call_cnvscope(bam: Any, output: str, param: Dict[str, Any]) -> None:
         algo_opt += f" --model {param['model']}"
     else:
         raise Exception("Model is not specified for CNVscope.")
-    cmd = f"{bam.sentieon} driver {driver_opt} --algo CNVscope {algo_opt} {output}"
+    return f"{bam.sentieon} driver {driver_opt} --algo CNVscope {algo_opt} {output}"
+
+
+def cnvscope_template(bam: Any, param: Dict[str, Any]) -> str:
+    return cnvscope_cmd(bam, _OUT, dict(param, output_norm=_NORM))
+
+
+def _run(bam: Any, cmd: str) -> None:
     bam.logger.debug(f"Running command: {cmd}")
     with throttle.slot():
         result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
     result.check_returncode()
+
+
+def call_cnvscope(bam: Any, output: str, param: Dict[str, Any]) -> None:
+    if bam.use_existing and os.path.exists(output) and os.path.getsize(output):
+        return
+    _run(bam, cnvscope_cmd(bam, output, param))
+
+
+def _segment_param(bam: Any, chrom: str, output_norm: str = _NORM) -> Dict[str, Any]:
+    # what a gene's segmentation passes call_cnvscope for one chromosome
+    param = {"region": chrom, "output_norm": output_norm}
+    if bam.cnv_model:
+        param["model"] = bam.cnv_model
+    return param
+
+
+def source_cnvscope(
+    bams: Dict[str, Any], chroms: List[str], out_dir: str, max_parallel: int
+) -> Dict[Tuple[str, str], Tuple[str, str]]:
+    """Each input's source CNVscope per chromosome: {(input tag, chromosome): (VCF, TSV)}.
+
+    The one place that decides how the stage runs CNVscope; callers see only these outputs. It runs
+    the genes' own command per input and chromosome, max_parallel at a time: one call over several
+    chromosomes normalises them together and changes the depths. A failed run is left out, and
+    its genes run their own.
+    """
+
+    def run(job):
+        tag, bam, chrom = job
+        vcf, norm = (os.path.join(out_dir, f"{tag}.{chrom}{x}") for x in (".vcf.gz", ".norm.tsv"))
+        try:
+            call_cnvscope(bam, vcf, _segment_param(bam, chrom, norm))
+        except Exception as e:
+            bam.logger.error(f"Source CNVscope on {chrom} failed; its genes run their own: {e}")
+            return None
+        return (tag, chrom), (vcf, norm)
+
+    jobs = [(tag, bam, chrom) for tag, bam in bams.items() for chrom in chroms]
+    with ThreadPoolExecutor(max_workers=max(1, min(max_parallel, len(jobs)))) as pool:
+        return dict(r for r in pool.map(run, jobs) if r)
+
+
+def staged_table(
+    bams: Dict[str, Any], outputs: Dict[Tuple[str, str], Tuple[str, str]]
+) -> Dict[str, Tuple[str, str]]:
+    """{command template: (VCF, TSV)}: each staged output under the gene command it stands for."""
+    return {
+        cnvscope_template(bams[tag], _segment_param(bams[tag], chrom)): paths
+        for (tag, chrom), paths in outputs.items()
+    }
+
+
+def staged_run(bam: Any, param: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """(VCF, TSV) the up-front stage wrote for this exact command, or None to run it here."""
+    table = getattr(bam, "source_cnv", None)
+    if table is None:  # no stage for this Bam (a lifted Bam, or a run without one)
+        return None
+    staged = table.get(cnvscope_template(bam, param))
+    bam.logger.info(
+        f"Source CNVscope for {param.get('region')}: "
+        + (f"staged output {staged[0]}" if staged else "no staged output, running its own")
+    )
+    return staged
 
 
 def call_depth(bam: Any, output: str, param: Dict[str, Any]) -> None:
@@ -56,7 +133,11 @@ def call_depth(bam: Any, output: str, param: Dict[str, Any]) -> None:
         tmp_output = output
         tmp_output_norm = output_norm
     param["output_norm"] = tmp_output_norm
-    call_cnvscope(bam, tmp_output, param)
+    staged = staged_run(bam, param)
+    if staged:  # the up-front stage ran this exact command
+        tmp_output, tmp_output_norm = staged
+    else:
+        call_cnvscope(bam, tmp_output, param)
     if orig_region:
         param["region"] = orig_region
     vcf = vcflib.VCF(tmp_output)

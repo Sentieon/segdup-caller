@@ -22,6 +22,47 @@ Segment = namedtuple("Segment", "chrom, start, end, cnt, mq, mean, std, mean0, s
 DepthSegment = namedtuple("DepthSegment", "chrom, start, end, mq, mean, mean0")
 PileUpRecord = namedtuple("PileUpRecord", "pos, MQ, AD")
 
+# The merged liftover BAM holds only the gene's regions:
+# padding beyond every configured region, and the margin a query must keep from the edge.
+LIFTOVER_BAM_PADDING = 10000
+LIFTOVER_BAM_GUARD = 1000
+
+
+def liftover_bam_intervals(gene: Any, padding: int = LIFTOVER_BAM_PADDING) -> str:
+    """Intervals of the regions-only merged liftover BAM: every region its consumers query, padded."""
+    parts = list(gene.gene_regions) + list(gene.liftover_target_regions)
+    parts += list(gene.realign_regions)
+    parts += [r for _, r in getattr(gene, "cn_regions", None) or []]
+    parts += [c["region"] for c in gene.conversion_regions or []]
+    parts += [r[0] if isinstance(r, (list, tuple)) else r for r in gene.recombination_regions or []]
+    spans = {}
+    for part in ",".join(p for p in parts if p).split(","):
+        chrom, se = part.split(":")
+        s, e = (int(x) for x in se.split("-"))
+        spans.setdefault(chrom, []).append((max(0, s - 1 - padding), e + padding))
+    # sort-and-merge; the spans nest (a gene region contains its cn_regions)
+    out = []
+    for chrom, iv in spans.items():
+        iv.sort()
+        cs, ce = iv[0]
+        for s, e in iv[1:]:
+            if s > ce:
+                out.append((chrom, cs, ce))
+                cs, ce = s, e
+            else:
+                ce = max(ce, e)
+        out.append((chrom, cs, ce))
+    return ",".join(f"{c}:{s + 1}-{e}" for c, s, e in out)
+
+
+def covers(itv: IntervalList, chrom: str, start: int, end: int) -> bool:
+    """True if 0-based [start, end) lies inside a single interval of itv."""
+    r = itv.regions.get(chrom)
+    if not r:
+        return False
+    i = bisect.bisect_right(r, start)
+    return i % 2 == 1 and end <= r[i]
+
 
 class Bam:
     def __init__(self, bam: str, ref: str, param: Dict[str, Any]) -> None:
@@ -45,6 +86,9 @@ class Bam:
         self.tmpdir = param["tmpdir"]
         self.dp_norm = 1.0
         self.pileup_records = {}
+        self.source_cnv = None  # input Bam: the up-front stage's CNVscope runs, by command
+        self.cnv_inputs = None  # lifted Bam: CNVscope reads these BAMs, not the regions-only merge
+        self.liftover_covered = None  # lifted Bam: the IntervalList the regions-only merge holds
         if "tools" not in param:
             raise Exception("External tools are not set up")
         for k, v in param["tools"].items():
@@ -176,17 +220,25 @@ class Bam:
             self.bamh = pysam.AlignmentFile(self.bam, "rb")
         return self.bamh
 
+    def check_covered(self, chrom: str, start: int, end: int) -> None:
+        """Raise unless 0-based [start, end) +/- LIFTOVER_BAM_GUARD lies inside the regions-only merge."""
+        if self.liftover_covered is None:
+            return
+        if not covers(
+            self.liftover_covered, chrom, start - LIFTOVER_BAM_GUARD, end + LIFTOVER_BAM_GUARD
+        ):
+            msg = (
+                f"LIFTOVER_BAM_GUARD trip: {chrom}:{start + 1}-{end} is not inside the "
+                f"regions-only liftover BAM {self.bam} with {LIFTOVER_BAM_GUARD} bp to spare"
+            )
+            self.logger.error(msg)
+            raise RuntimeError(msg)
+
     def _pileup_safe(
         self, bamh: pysam.AlignmentFile, region: str, truncate: bool = True
     ) -> Any:
-        """Safe pileup that handles CRAM files without multiple_iterators warning"""
-        if self.bam.endswith(".cram"):
-            # CRAM doesn't support multiple_iterators, so don't use it
-            return bamh.pileup(
-                region=region, truncate=truncate, multiple_iterators=False
-            )
-        else:
-            return bamh.pileup(region=region, truncate=truncate)
+        """Pileup on the open handle; no reopen or index reload. Each caller drains it before the next query."""
+        return bamh.pileup(region=region, truncate=truncate, multiple_iterators=False)
 
     def init_outbamh(self, out_bam: str) -> pysam.AlignmentFile:
         self.init_bamh()
@@ -332,7 +384,11 @@ class Bam:
             )
         if self.use_existing and os.path.exists(out_bam) and os.path.getsize(out_bam):
             return results
-        cmd = f"{self.sentieon} driver -r {self.ref} -i {self.bam} -i {' -i '.join(liftover_bams)} --interval {gene.chr} --algo ReadWriter {out_bam}"
+        # gene regions only; the lifted CNVscope reads the input and the lifted BAMs (Bam.cnv_inputs)
+        cmd = (
+            f"{self.sentieon} driver -r {self.ref} -i {self.bam} -i {' -i '.join(liftover_bams)} "
+            f"--interval {liftover_bam_intervals(gene)} --algo ReadWriter --bam_compression 1 {out_bam}"
+        )
         self.logger.debug(f"Running command: {cmd}")
         with throttle.slot():
             result = subprocess.run(cmd, capture_output=True, text=True, shell=True)
@@ -652,6 +708,7 @@ class Bam:
         cache_key = (chr, pos, include_softclips)
         if cache_key in self.pileup_records:
             return self.pileup_records[cache_key]
+        self.check_covered(chr, pos, pos + 1)  # the soft-clip fetch below reaches 200 bp out
         if self.bamh is None:
             self.init_bamh()
         pileuprec = None

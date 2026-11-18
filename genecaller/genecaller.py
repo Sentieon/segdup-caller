@@ -18,8 +18,9 @@ from genecaller.util import (
     read_bundle_info,
     Reference,
 )
-from genecaller.bam_process import Bam
+from genecaller.bam_process import Bam, liftover_bam_intervals
 from genecaller.calling.small_var import validate_pop_vcf_coverage
+from genecaller.calling.cnv import source_cnvscope, staged_table
 from genecaller.gene import Gene
 from genecaller.genes import get_gene_class
 from genecaller import __version__
@@ -32,6 +33,16 @@ from genecaller import throttle
 from datetime import datetime
 
 logger = get_logger(__name__)
+
+# pool submission order, longest first by measured wall time
+GENE_RUN_ORDER = ("RCCX", "CFH", "GBA", "RH", "PMS2", "NCF1", "SBDS", "CYP11B1", "SMN1", "OTOA",
+                  "STRC", "CYP2B6", "HBA", "IKBKG", "CYP2D6", "CYP2A6", "LPA")
+
+
+def run_order(sections: list) -> list:
+    """Indices of the genes in submission order: by GENE_RUN_ORDER, then the others as requested."""
+    rank = {name: i for i, name in enumerate(GENE_RUN_ORDER)}
+    return sorted(range(len(sections)), key=lambda i: rank.get(sections[i], len(rank)))
 
 
 CALLING_MIN_VERSIONS = {
@@ -182,6 +193,9 @@ def _perform_liftover(gene: "Gene", read_data: dict, ref: str) -> None:
         liftover_fname = f"{liftover_params['prefix']}.bam"
         liftover_results = bam.liftover_combine(gene, liftover_fname)
         liftover_bam = Bam(liftover_fname, ref, liftover_params)
+        # the merged BAM holds the gene regions only: CNVscope reads the input plus the lifted copies
+        liftover_bam.cnv_inputs = [bam.bam] + [r["lifted_bam"] for r in liftover_results]
+        liftover_bam.liftover_covered = IntervalList(region=liftover_bam_intervals(gene))
         rd["liftover"] = liftover_bam
         rd["liftover_valid"] = [
             IntervalList(region=gene.liftover_target_regions[i])
@@ -200,6 +214,7 @@ def _init_read_data(input_files, ref, params, gene_name) -> dict:
     )
     sr_params["model"] = params["sr_model"]
     short_bam = Bam(short, ref, sr_params)
+    short_bam.source_cnv = params.get("source_cnvscope")
     read_data = {"short_read": {"bam": short_bam, "params": sr_params}}
     if long:
         lr_params = copy.copy(params)
@@ -211,8 +226,40 @@ def _init_read_data(input_files, ref, params, gene_name) -> dict:
             lr_params["model"] = params["lr_model"]
         lr_params.pop("input_vcf", None)
         long_bam = Bam(long, ref, lr_params)
+        long_bam.source_cnv = params.get("source_cnvscope")
         read_data["long_read"] = {"bam": long_bam, "params": lr_params}
     return read_data
+
+
+def source_cnvscope_chroms(genes, ref: str) -> list:
+    """The chromosomes whose input CNVscope the genes' segmentation reads, longest first."""
+    chroms = []
+    for gene in genes:
+        if not getattr(gene, "needs_liftover", True):  # LPA builds its own CN estimate
+            continue
+        c = list(IntervalList(region=",".join(gene.gene_regions)).regions)
+        if len(c) == 1 and c[0] not in chroms:  # a gene spanning chromosomes runs its own
+            chroms.append(c[0])
+    with open(ref + ".fai") as fh:
+        length = {f[0]: int(f[1]) for f in (line.split("\t") for line in fh)}
+    return sorted(chroms, key=lambda c: -length.get(c, 0))
+
+
+def _source_cnvscope_stage(genes, input_files, ref, params):
+    """Run every input's CNVscope over those chromosomes once, before the genes start."""
+    chroms = source_cnvscope_chroms(genes, ref)
+    if not chroms:
+        return None
+    # the same Bams the genes build, so each command matches the one a gene would run
+    bams = {k: rd["bam"] for k, rd in _init_read_data(input_files, ref, params, "stage").items()}
+    out_dir = os.path.join(params["tmpdir"], "source_cnvscope")
+    os.makedirs(out_dir, exist_ok=True)
+    logger.info(f"Source CNVscope: {len(bams) * len(chroms)} runs over {', '.join(chroms)}")
+    t0 = time.time()
+    outputs = source_cnvscope(bams, chroms, out_dir, min(params["workers"], params["threads"]))
+    failed = len(bams) * len(chroms) - len(outputs)
+    logger.info(f"Source CNVscope done in {time.time() - t0:.0f} s; {failed} failed")
+    return staged_table(bams, outputs)
 
 
 class GeneCaller:
@@ -221,6 +268,7 @@ class GeneCaller:
     def __init__(self) -> None:
         self.tools = {}
         self.genes = []
+        self.gene_sections = []  # yaml section names of self.genes, in the requested order
         self.input = []
         self.read_data = {}
         self.params = {}
@@ -504,6 +552,7 @@ class GeneCaller:
         # Extract sex argument (if provided)
         sex = getattr(args, "sex", None)
         self.genes = [get_gene_class(g)(config[g], self.ref, sex=sex) for g in genes]
+        self.gene_sections = genes
 
         if args.threads > cpu_count():
             logger.warning(
@@ -645,6 +694,10 @@ class GeneCaller:
         logger.info("All required input files and indices validated successfully")
 
     def process_genes(self) -> Dict[str, Any]:
+        # the source CNVscope of every chromosome runs once, here; the genes read its outputs
+        self.params["source_cnvscope"] = _source_cnvscope_stage(
+            self.genes, self.input, self.ref, self.params
+        )
         # Prepare task arguments for each gene
         gene_tasks = []
         for i, gene in enumerate(self.genes):
@@ -671,15 +724,14 @@ class GeneCaller:
                     initializer=throttle.init_worker,
                     initargs=(slot_sem,),
                 ) as executor:
-                    # submit task
-                    future_results = {
-                        executor.submit(process_single_gene, task): task[0].gene_names[
-                            0
-                        ]
-                        for task in gene_tasks
+                    # longest first, so a long gene does not run alone at the end
+                    futures = {
+                        i: executor.submit(process_single_gene, gene_tasks[i])
+                        for i in run_order(self.gene_sections)
                     }
-                # Collect results
-                for returned, gene_name in future_results.items():
+                # Collect in the requested order: the merged VCF follows this order
+                for i, task in enumerate(gene_tasks):
+                    returned, gene_name = futures[i], task[0].gene_names[0]
                     try:
                         gene_result = returned.result()
                         results[gene_name] = gene_result

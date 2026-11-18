@@ -321,6 +321,10 @@ def call_dnascope(bam: Any, output: str, param: Dict[str, Any]) -> None:
         apply_model = param["model"]
     if "region" in param:
         driver_opt += f" --interval {param['region']}"
+        if getattr(bam, "liftover_covered", None) is not None:  # regions-only merged BAM
+            for chrom, spans in IntervalList.parse_region(param["region"]).items():
+                for s, e in spans:
+                    bam.check_covered(chrom, s, e)
     if "dbsnp" in param:
         algo_opt += f" -d {param['dbsnp']}"
     if apply_model:

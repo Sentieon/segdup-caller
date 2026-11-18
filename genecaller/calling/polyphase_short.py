@@ -151,6 +151,7 @@ def _build_matrix(
                     min_base_quality=MIN_BASE_QUAL,
                     min_mapping_quality=MIN_MAP_QUAL,
                     stepper="samtools",
+                    multiple_iterators=False,  # sole iterator on this handle; skip the reopen
                 )
             except ValueError:
                 # No reads / bad region
